@@ -2,12 +2,30 @@ import streamlit as st
 import pdfplumber
 import io
 import pandas as pd
+import unicodedata
+import re
 from supabase import create_client, Client
 
 def supabase_baglantisi_kur():
     url = st.secrets["supabase"]["url"]
     key = st.secrets["supabase"]["key"]
     return create_client(url, key)
+
+# Türkçe karakterleri ve boşlukları temizleyerek Supabase uyumlu hale getiren fonksiyon
+def dosya_adini_duzenle(dosya_adi):
+    if "." in dosya_adi:
+        isim, uzanti = dosya_adi.rsplit(".", 1)
+    else:
+        isim, uzanti = dosya_adi, "pdf"
+        
+    tr_harfler = str.maketrans("çğıöşüÇĞİÖŞÜ", "cgiosuCGIOSU")
+    isim = isim.translate(tr_harfler)
+    
+    isim = unicodedata.normalize('NFKD', isim).encode('ascii', 'ignore').decode('utf-8')
+    isim = re.sub(r'[^a-zA-Z0-9_-]', '_', isim)
+    isim = re.sub(r'_+', '_', isim).strip('_')
+    
+    return f"{isim}.{uzanti}".lower()
 
 st.title("Yönetim Paneli")
 st.markdown("PDF kural kitapçıklarını yükleyin ve mevcut arşivinizi yönetin.")
@@ -50,33 +68,30 @@ else:
                 toplam_sayfa_kaydi = 0
                 
                 for dosya in yuklenen_dosyalar:
-                    dosya_adi = dosya.name
+                    orijinal_ad = dosya.name
+                    temiz_dosya_adi = dosya_adini_duzenle(orijinal_ad)
                     dosya_verisi = dosya.read()
                     
                     try:
-                        # Eski dosya varsa depodan temizle
-                        try:
-                            supabase.storage.from_("Belgeler").remove([dosya_adi])
-                        except:
-                            pass 
+                        # 1. Veritabanındaki eski metin kayıtlarını temizle
+                        supabase.table("kural_icerikleri").delete().eq("dosya_adi", temiz_dosya_adi).execute()
                         
-                        # Dosyayı kesin PDF kimliğiyle yükle
+                        # 2. ÜZERİNE YAZMA (UPSERT) KOMUTU EKLENDİ! 
+                        # Bu sayede depoda eski/hayalet dosya varsa bile 409 hatası vermeyip acımasızca ezecek.
                         file_options = {
-                            "content-type": "application/pdf"
+                            "content-type": "application/pdf",
+                            "x-upsert": "true"  # İşte 409 hatasını tarihe gömen sihirli satır!
                         }
                         
                         supabase.storage.from_("Belgeler").upload(
-                            path=dosya_adi, 
+                            path=temiz_dosya_adi, 
                             file=dosya_verisi, 
                             file_options=file_options
                         )
                         
-                        res_url = supabase.storage.from_("Belgeler").get_public_url(dosya_adi)
+                        res_url = supabase.storage.from_("Belgeler").get_public_url(temiz_dosya_adi)
                         dosya_url = res_url.get('publicUrl') if isinstance(res_url, dict) else str(res_url)
                         
-                        # Eski veritabanı kayıtlarını sil (Üzerine yazmayı önlemek için)
-                        supabase.table("kural_icerikleri").delete().eq("dosya_adi", dosya_adi).execute()
-
                         with pdfplumber.open(io.BytesIO(dosya_verisi)) as pdf:
                             for sayfa_index, sayfa in enumerate(pdf.pages):
                                 metin = sayfa.extract_text()
@@ -84,7 +99,7 @@ else:
                                     sayfa_no = sayfa_index + 1
                                     
                                     supabase.table("kural_icerikleri").insert({
-                                        "dosya_adi": dosya_adi,
+                                        "dosya_adi": temiz_dosya_adi,
                                         "kategori": secilen_kategori,
                                         "sayfa_no": sayfa_no,
                                         "icerik": metin,
@@ -93,9 +108,9 @@ else:
                                     
                                     toplam_sayfa_kaydi += 1
                                     
-                        st.success(f"'{dosya_adi}' başarıyla işlendi (Toplam {len(pdf.pages)} sayfa).")
+                        st.success(f"'{orijinal_ad}' başarıyla işlendi (Toplam {len(pdf.pages)} sayfa).")
                     except Exception as e:
-                        st.warning(f"'{dosya_adi}' işlenirken hata oluştu: {e}")
+                        st.warning(f"'{orijinal_ad}' işlenirken hata oluştu: {e}")
                 
                 if toplam_sayfa_kaydi > 0:
                     st.success(f"İşlem tamamlandı! Toplam {toplam_sayfa_kaydi} sayfalık veri tabanı kaydı oluşturuldu.")
@@ -105,7 +120,8 @@ else:
     with sekme2:
         st.subheader("Yüklenmiş Belgeler Arşivi")
         try:
-            response = supabase.table("kural_icerikleri").select("dosya_adi, kategori, dosya_url").execute()
+            response = supabase.table("kural_icerikleri").select("dosya_adi, kategori, dosya_url").limit(10000).execute()
+            
             if response.data:
                 df = pd.DataFrame(response.data)
                 df_unique = df.drop_duplicates(subset=["dosya_adi"]).sort_values(by="dosya_adi", ascending=True).reset_index(drop=True)
@@ -122,16 +138,11 @@ else:
                         st.caption(f"Kategori: {row['kategori']}")
                     with col3:
                         doc_url = row['dosya_url']
-                        if isinstance(doc_url, dict):
-                            doc_url = doc_url.get('publicUrl', '')
-                        if doc_url:
-                            st.markdown(f"[Aç / İndir]({doc_url})")
+                        if isinstance(doc_url, dict): doc_url = doc_url.get('publicUrl', '')
+                        if doc_url: st.markdown(f"[Aç / İndir]({doc_url})")
                     with col4:
-                        # GERİ EKLENEN SİLME BUTONU
                         if st.button("Sil", key=f"sil_{dosya_adi_sil}"):
-                            # 1. Veritabanındaki tüm sayfa kayıtlarını temizle
                             supabase.table("kural_icerikleri").delete().eq("dosya_adi", dosya_adi_sil).execute()
-                            # 2. Fiziksel dosyayı depodan temizle
                             try:
                                 supabase.storage.from_("Belgeler").remove([dosya_adi_sil])
                             except:
