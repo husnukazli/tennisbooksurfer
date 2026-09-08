@@ -4,8 +4,8 @@ import re
 import urllib.parse
 from supabase import create_client, Client
 import google.generativeai as genai
+from groq import Groq
 
-# Sözlüğü ayrı dosyadan içe aktarıyoruz
 from sozluk import TENNIS_SOZLugu
 
 def supabase_baglantisi_kur():
@@ -13,15 +13,71 @@ def supabase_baglantisi_kur():
     key = st.secrets["supabase"]["key"]
     return create_client(url, key)
 
-# Gemini API Yapılandırması
-def yapay_zeka_ayarla():
+HAKEM_ROL_TANIMI = (
+    "Sen uluslararası düzeyde görev yapan tecrübeli ve kıdemli bir Tenis Başhakemisin (Chief Umpire / Supervisor). "
+    "Saha içinde kural tereddüdü yaşayan kule veya gözlemci hakemine rehberlik ediyorsun. "
+    "Cevapların kesinlikle kuru, robotik bir kanun kopyası olmamalı; doğal, akıcı, net ve aksiyon odaklı olmalıdır. "
+    "Önce hakemin sahada ANINDA vermesi gereken kararı ve uygulaması gereken adımı açıkla. "
+    "Ardından kararın kural gerekçesini ve kitapçıktaki ilgili sayfa/madde dayanağını belirt."
+)
+
+def gemini_modeli_ayarla():
     try:
         genai.configure(api_key=st.secrets["gemini"]["api_key"])
-        model = genai.GenerativeModel('gemini-flash-latest')
+        model = genai.GenerativeModel(
+            model_name='gemini-flash-latest',
+            system_instruction=HAKEM_ROL_TANIMI,
+            generation_config={
+                "temperature": 0.3,
+                "max_output_tokens": 900
+            }
+        )
         return model
-    except Exception as e:
-        st.error("Gemini API anahtarı ayarlanırken bir sorun oluştu.")
+    except Exception:
         return None
+
+def groq_istemcisi_ayarla():
+    try:
+        api_key = st.secrets["groq"]["api_key"]
+        return Groq(api_key=api_key)
+    except Exception:
+        return None
+
+def gemini_ile_coz(model, baglam_metni, olay_metni):
+    prompt = f"""
+    Aşağıda ilgili tenis talimatı/kural sayfası verilmiştir:
+    KURAL METNİ:
+    {baglam_metni}
+
+    HAKEMİN SAHADA KARŞILAŞTIĞI OLAY:
+    "{olay_metni}"
+
+    GÖREV:
+    Bu kurala göre hakemin sahada ne karar vermesi gerektiğini, izlenecek prosedürü ve varsa ceza puanı/kod ihlalini net bir dille açıkla.
+    """
+    response = model.generate_content(prompt, stream=True)
+    for chunk in response:
+        if chunk.text:
+            yield chunk.text
+
+def groq_ile_coz(client, baglam_metni, olay_metni):
+    completion = client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=[
+            {"role": "system", "content": HAKEM_ROL_TANIMI},
+            {
+                "role": "user",
+                "content": f"KURAL METNİ:\n{baglam_metni}\n\nHAKEMİN SAHADA KARŞILAŞTIĞI OLAY:\n{olay_metni}\n\nGÖREV:\nHakemin sahada vermesi gereken kararı ve usulü net şekilde açıkla."
+            }
+        ],
+        temperature=0.3,
+        max_tokens=900,
+        stream=True
+    )
+    for chunk in completion:
+        delta = chunk.choices[0].delta.content
+        if delta:
+            yield delta
 
 def hakem_panelini_ciz():
     st.title("Başhakem Dijital Asistanı")
@@ -30,15 +86,16 @@ def hakem_panelini_ciz():
 
     try:
         supabase = supabase_baglantisi_kur()
-    except Exception as e:
+    except Exception:
         st.error("Supabase bağlantı ayarları yüklenemedi. Lütfen Secrets bölümünü kontrol edin.")
         return
-        
-    ai_model = yapay_zeka_ayarla()
+
+    gemini_model = gemini_modeli_ayarla()
+    groq_client = groq_istemcisi_ayarla()
 
     sekme_arama, sekme_ai, sekme_indeks = st.tabs(["🔍 Kural Arama", "🤖 Genel AI Olay Çözücü", "📚 Belge İndeksi"])
 
-    # ------------------ 1. KLASİK ARAMA VE MİKRO-AI SEKMESİ ------------------
+    # ------------------ 1. ARAMA VE ÇİFT YAPAY ZEKA DESTEĞİ ------------------
     with sekme_arama:
         if 'aktif_kategori' not in st.session_state:
             st.session_state.aktif_kategori = "Kategori Seçilmedi"
@@ -78,11 +135,8 @@ def hakem_panelini_ciz():
         else:
             st.success(f"**Aktif Kategori:** {st.session_state.aktif_kategori}")
             
-            # --- YENİ: BELGE BAZLI FİLTRELEME (GÖRÜNÜR BUTONLARLA) ---
             secilen_dosyalar = []
-            
             try:
-                # O kategoriye ait yüklenmiş benzersiz belge isimlerini çekiyoruz
                 sorgu_belgeler = supabase.table("kural_icerikleri").select("dosya_adi")
                 if st.session_state.aktif_kategori != "Tüm Talimatlar":
                     sorgu_belgeler = sorgu_belgeler.eq("kategori", st.session_state.aktif_kategori)
@@ -93,18 +147,14 @@ def hakem_panelini_ciz():
                 if mevcut_belgeler:
                     st.markdown("###### Aramaya Dahil Edilecek Belgeler:")
                     tumunu_sec = st.toggle("Hepsini Seç / Kaldır", value=True, key="toggle_arama")
-                    
-                    # Belgeleri gizli açılır pencere yerine belirgin liste butonları olarak diziyoruz
                     for belge in mevcut_belgeler:
                         if st.checkbox(belge, value=tumunu_sec, key=f"chk_{belge}"):
                             secilen_dosyalar.append(belge)
                 else:
                     st.warning("Bu kategoride kayıtlı belge bulunamadı.")
-            except Exception as e:
+            except Exception:
                 st.error("Belgeler yüklenirken hata oluştu.")
-            
-            # ---------------------------------------------------------
-            
+
             if "arama_sonuclari" not in st.session_state:
                 st.session_state.arama_sonuclari = None
             if "aranan_terimler" not in st.session_state:
@@ -143,10 +193,7 @@ def hakem_panelini_ciz():
                             aranacak_terimler_listesi = list(aranacak_terimler)
                             
                             sorgu = supabase.table("kural_icerikleri").select("dosya_adi, kategori, sayfa_no, dosya_url, icerik")
-                            
-                            # Sadece seçtiğimiz (işaretlediğimiz) dosyalar içinde ara
                             sorgu = sorgu.in_("dosya_adi", secilen_dosyalar)
-                            
                             filtre_parcalari = [f"icerik.ilike.%{terim}%" for terim in aranacak_terimler_listesi]
                             sorgu = sorgu.or_(",".join(filtre_parcalari))
                             
@@ -200,52 +247,44 @@ def hakem_panelini_ciz():
                         else:
                             st.markdown(f"**İlgili Bağlam:**<br>...{metin[:300]}...", unsafe_allow_html=True)
                             
-                        with st.expander(f"🤖 Sadece {sayfa_no}. Sayfayı Yapay Zekaya Yorumlat (Kota Dostu)"):
-                            st.caption("Yapay zeka tüm kitabı okumak yerine sadece bu sayfadaki kurala bakarak sorunuzu cevaplar.")
-                            ai_soru = st.text_input("Olayı kısaca anlatın:", key=f"soru_{idx}")
-                            
-                            if st.button("Bu Sayfaya Göre Analiz Et", key=f"analiz_{idx}"):
+                        # Sayfa bazında AI yorumlama alanı
+                        st.markdown(f"**🤖 {sayfa_no}. Sayfa Kuralını Yapay Zekaya Yorumlat**")
+                        ai_soru = st.text_input("Sahadaki olayı yazın:", key=f"soru_{idx}")
+                        
+                        btn_col1, btn_col2 = st.columns(2)
+                        
+                        with btn_col1:
+                            if st.button("⚡ Groq (Llama 3) ile Çöz", key=f"groq_{idx}", use_container_width=True):
                                 if not ai_soru:
                                     st.warning("Lütfen olayı yazın.")
-                                elif not ai_model:
-                                    st.error("Gemini API hazır değil.")
+                                elif not groq_client:
+                                    st.error("Groq API anahtarı ayarlanmamış.")
                                 else:
-                                    with st.spinner("AI bu kural maddesini okuyup kararı hazırlıyor..."):
-                                        try:
-                                            prompt = f"""
-                                            Sen uluslararası yetkili bir Tenis Başhakemisin (Gold Badge).
-                                            Sadece aşağıdaki spesifik kural metnine dayanarak olayı değerlendir.
-                                            
-                                            KURAL METNİ ({kayit['dosya_adi']} - Sayfa {sayfa_no}):
-                                            {metin}
-                                            
-                                            HAKEMİN SORDUĞU OLAY:
-                                            "{ai_soru}"
-                                            
-                                            GÖREVİN: 
-                                            Bu spesifik kurala göre olayın ihlal olup olmadığını, hakemin hangi kararı vermesi gerektiğini net ve kısa bir dille açıkla.
-                                            """
-                                            cevap = ai_model.generate_content(prompt)
-                                            st.success("🤖 **Yapay Zeka Kararı:**")
-                                            st.markdown(cevap.text)
-                                        except Exception as e:
-                                            st.error(f"Yapay Zeka analizi sırasında hata oluştu: {e}")
+                                    st.success("🤖 **Groq Başhakem Kararı:**")
+                                    st.write_stream(groq_ile_coz(groq_client, metin, ai_soru))
+                                    
+                        with btn_col2:
+                            if st.button("✨ Gemini ile Çöz", key=f"gemini_{idx}", use_container_width=True):
+                                if not ai_soru:
+                                    st.warning("Lütfen olayı yazın.")
+                                elif not gemini_model:
+                                    st.error("Gemini API anahtarı ayarlanmamış.")
+                                else:
+                                    st.success("🤖 **Gemini Başhakem Kararı:**")
+                                    st.write_stream(gemini_ile_coz(gemini_model, metin, ai_soru))
                                             
                         st.markdown("---")
                 else:
                     st.warning("Seçili belgelerde bu terime rastlanmadı.")
 
-    # ------------------ 2. YAPAY ZEKA SEKMESİ (Geniş Çaplı Tarama) ------------------
+    # ------------------ 2. GENEL YAPAY ZEKA SEKMESİ ------------------
     with sekme_ai:
         st.subheader("🤖 Genel Yapay Zeka Başhakem Yardımcısı")
-        st.markdown("Soracağınız sorular, altta seçeceğiniz belgelere ait **en alakalı ilk 15 sayfayı** tarayarak cevaplanır.")
+        st.markdown("Olayı yazıp tercih ettiğiniz yapay zeka motoru ile çözdürebilirsiniz.")
         
         if st.session_state.aktif_kategori == "Kategori Seçilmedi" or st.session_state.aktif_kategori == "Tüm Talimatlar":
-            st.warning("Lütfen yukarıdaki Arama sekmesinden okutmak istediğiniz tek bir Kategori seçin.")
-        elif not ai_model:
-            st.warning("Gemini API hazır değil. Lütfen ayarlarınızı kontrol edin.")
+            st.warning("Lütfen arama sekmesinden okutulacak tek bir kategori belirleyin.")
         else:
-            # AI sekmesinde de hangi belgeleri okutmak istediğinizi seçebiliyorsunuz
             ai_secilen_dosyalar = []
             try:
                 sorgu_belgeler_ai = supabase.table("kural_icerikleri").select("dosya_adi").eq("kategori", st.session_state.aktif_kategori)
@@ -253,63 +292,56 @@ def hakem_panelini_ciz():
                 mevcut_belgeler_ai = sorted(list(set([row["dosya_adi"] for row in belge_sonuc_ai])))
                 
                 if mevcut_belgeler_ai:
-                    st.markdown("###### Yapay Zekaya Okutulacak Belgeler:")
-                    tumunu_sec_ai = st.toggle("Hepsini Seç / Kaldır", value=True, key="toggle_ai")
-                    
+                    st.markdown("###### Taranacak Belgeler:")
+                    tumunu_sec_ai = st.toggle("Tümünü Seç / Kaldır", value=True, key="toggle_ai")
                     for belge in mevcut_belgeler_ai:
                         if st.checkbox(belge, value=tumunu_sec_ai, key=f"ai_chk_{belge}"):
                             ai_secilen_dosyalar.append(belge)
-            except Exception as e:
+            except Exception:
                 pass
 
-            olay_metni = st.chat_input("Olayı anlatın...", key="ai_input_genel")
+            genel_olay = st.text_area("Olayı detaylandırın:", height=100)
+            g_col1, g_col2 = st.columns(2)
             
-            if olay_metni:
+            calistir_groq = g_col1.button("⚡ Groq ile Analiz Et", use_container_width=True, type="primary")
+            calistir_gemini = g_col2.button("✨ Gemini ile Analiz Et", use_container_width=True)
+            
+            if (calistir_groq or calistir_gemini) and genel_olay:
                 if not ai_secilen_dosyalar and mevcut_belgeler_ai:
-                    st.error("Lütfen yapay zekanın okuması için en az bir belge işaretleyin!")
+                    st.error("Lütfen taranacak en az bir belge seçin.")
                 else:
-                    with st.chat_message("user"):
-                        st.write(olay_metni)
-                    
-                    with st.chat_message("assistant"):
-                        with st.spinner("Seçili kural sayfaları filtreleniyor ve yapay zeka analiz ediyor..."):
-                            try:
-                                kelimeler = [k.lower().strip() for k in olay_metni.split() if len(k) > 2]
-                                sorgu = supabase.table("kural_icerikleri").select("sayfa_no, icerik").eq("kategori", st.session_state.aktif_kategori).in_("dosya_adi", ai_secilen_dosyalar)
-                                
-                                if kelimeler:
-                                    filtre_parcalari = [f"icerik.ilike.%{k}%" for k in kelimeler[:4]]
-                                    sorgu = sorgu.or_(",".join(filtre_parcalari))
-                                
-                                response = sorgu.limit(15).execute()
-                                
-                                tum_metin = ""
-                                if response.data:
-                                    for satir in response.data:
-                                        tum_metin += f"\n--- Sayfa {satir['sayfa_no']} ---\n{satir['icerik']}\n"
-                                
-                                if not tum_metin:
-                                    yedek_resp = supabase.table("kural_icerikleri").select("sayfa_no, icerik").eq("kategori", st.session_state.aktif_kategori).in_("dosya_adi", ai_secilen_dosyalar).limit(10).execute()
-                                    for satir in yedek_resp.data:
-                                        tum_metin += f"\n--- Sayfa {satir['sayfa_no']} ---\n{satir['icerik']}\n"
-                                
-                                prompt = f"""
-                                Sen uluslararası yetkili bir Tenis Başhakemisin.
-                                Sana resmi tenis kuralları dokümanından derlenen ilgili sayfaları veriyorum:
-                                KURAL METİNLERİ:
-                                {tum_metin}
-                                
-                                HAKEMİN SORDUĞU OLAY:
-                                "{olay_metni}"
-                                
-                                GÖREVİN: Olayın ihlal olup olmadığını, verilecek kararı ve cezasını açıkla. Kararı dayandırdığın Sayfa Numarasını ekle.
-                                """
-                                
-                                cevap = ai_model.generate_content(prompt)
-                                st.markdown(cevap.text)
-                                
-                            except Exception as e:
-                                st.error(f"Yapay Zeka analizi sırasında hata oluştu: {e}")
+                    with st.spinner("Kurallar taranıyor..."):
+                        kelimeler = [k.lower().strip() for k in genel_olay.split() if len(k) > 2]
+                        sorgu = supabase.table("kural_icerikleri").select("sayfa_no, icerik").eq("kategori", st.session_state.aktif_kategori).in_("dosya_adi", ai_secilen_dosyalar)
+                        
+                        if kelimeler:
+                            filtre_parcalari = [f"icerik.ilike.%{k}%" for k in kelimeler[:4]]
+                            sorgu = sorgu.or_(",".join(filtre_parcalari))
+                        
+                        response = sorgu.limit(10).execute()
+                        
+                        baglam_metni = ""
+                        if response.data:
+                            for satir in response.data:
+                                baglam_metni += f"\n--- Sayfa {satir['sayfa_no']} ---\n{satir['icerik']}\n"
+                        
+                        if not baglam_metni:
+                            yedek = supabase.table("kural_icerikleri").select("sayfa_no, icerik").eq("kategori", st.session_state.aktif_kategori).in_("dosya_adi", ai_secilen_dosyalar).limit(5).execute()
+                            for satir in yedek.data:
+                                baglam_metni += f"\n--- Sayfa {satir['sayfa_no']} ---\n{satir['icerik']}\n"
+                        
+                        if calistir_groq:
+                            if groq_client:
+                                st.success("🤖 **Groq Başhakem Kararı:**")
+                                st.write_stream(groq_ile_coz(groq_client, baglam_metni, genel_olay))
+                            else:
+                                st.error("Groq API anahtarı bulunamadı.")
+                        elif calistir_gemini:
+                            if gemini_model:
+                                st.success("🤖 **Gemini Başhakem Kararı:**")
+                                st.write_stream(gemini_ile_coz(gemini_model, baglam_metni, genel_olay))
+                            else:
+                                st.error("Gemini API anahtarı bulunamadı.")
 
     # ------------------ 3. İNDEKS SEKMESİ ------------------
     with sekme_indeks:
