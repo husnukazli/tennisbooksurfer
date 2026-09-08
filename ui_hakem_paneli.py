@@ -38,46 +38,52 @@ def gemini_modeli_ayarla():
 
 def groq_istemcisi_ayarla():
     try:
-        api_key = st.secrets["groq"]["api_key"]
+        api_key = st.secrets["groq"]["api_key"].strip()
         return Groq(api_key=api_key)
     except Exception:
         return None
 
 def gemini_ile_coz(model, baglam_metni, olay_metni):
-    prompt = f"""
-    Aşağıda ilgili tenis talimatı/kural sayfası verilmiştir:
-    KURAL METNİ:
-    {baglam_metni}
+    try:
+        prompt = f"""
+        Aşağıda ilgili tenis talimatı/kural sayfası verilmiştir:
+        KURAL METNİ:
+        {baglam_metni}
 
-    HAKEMİN SAHADA KARŞILAŞTIĞI OLAY:
-    "{olay_metni}"
+        HAKEMİN SAHADA KARŞILAŞTIĞI OLAY:
+        "{olay_metni}"
 
-    GÖREV:
-    Bu kurala göre hakemin sahada ne karar vermesi gerektiğini, izlenecek prosedürü ve varsa ceza puanı/kod ihlalini net bir dille açıkla.
-    """
-    response = model.generate_content(prompt, stream=True)
-    for chunk in response:
-        if chunk.text:
-            yield chunk.text
+        GÖREV:
+        Bu kurala göre hakemin sahada ne karar vermesi gerektiğini, izlenecek prosedürü ve varsa ceza puanı/kod ihlalini net bir dille açıkla.
+        """
+        response = model.generate_content(prompt, stream=True)
+        for chunk in response:
+            if chunk.text:
+                yield chunk.text
+    except Exception as e:
+        yield f"⚠️ Gemini Hatası: {str(e)}"
 
 def groq_ile_coz(client, baglam_metni, olay_metni):
-    completion = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
-        messages=[
-            {"role": "system", "content": HAKEM_ROL_TANIMI},
-            {
-                "role": "user",
-                "content": f"KURAL METNİ:\n{baglam_metni}\n\nHAKEMİN SAHADA KARŞILAŞTIĞI OLAY:\n{olay_metni}\n\nGÖREV:\nHakemin sahada vermesi gereken kararı ve usulü net şekilde açıkla."
-            }
-        ],
-        temperature=0.3,
-        max_tokens=900,
-        stream=True
-    )
-    for chunk in completion:
-        delta = chunk.choices[0].delta.content
-        if delta:
-            yield delta
+    try:
+        completion = client.chat.completions.create(
+            model="llama-3.1-8b-instant",
+            messages=[
+                {"role": "system", "content": HAKEM_ROL_TANIMI},
+                {
+                    "role": "user",
+                    "content": f"KURAL METNİ:\n{baglam_metni}\n\nHAKEMİN SAHADA KARŞILAŞTIĞI OLAY:\n{olay_metni}\n\nGÖREV:\nHakemin sahada vermesi gereken kararı ve usulü net şekilde açıkla."
+                }
+            ],
+            temperature=0.3,
+            max_tokens=900,
+            stream=True
+        )
+        for chunk in completion:
+            delta = chunk.choices[0].delta.content
+            if delta:
+                yield delta
+    except Exception as e:
+        yield f"⚠️ Groq Hatası: {str(e)}"
 
 def hakem_panelini_ciz():
     st.title("Başhakem Dijital Asistanı")
@@ -247,7 +253,7 @@ def hakem_panelini_ciz():
                         else:
                             st.markdown(f"**İlgili Bağlam:**<br>...{metin[:300]}...", unsafe_allow_html=True)
                             
-                        # Sayfa bazında AI yorumlama alanı
+                        # Sayfa bazında çift AI yorumlama alanı
                         st.markdown(f"**🤖 {sayfa_no}. Sayfa Kuralını Yapay Zekaya Yorumlat**")
                         ai_soru = st.text_input("Sahadaki olayı yazın:", key=f"soru_{idx}")
                         
