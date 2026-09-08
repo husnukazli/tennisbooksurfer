@@ -66,7 +66,24 @@ def gemini_ile_coz(model, baglam_metni, olay_metni):
 def groq_ile_coz(client, baglam_metni, olay_metni):
     try:
         completion = client.chat.completions.create(
-            model="llama-3.1-8b-instant",
+            model="llama-3.3-70b-versatile",
+            messages=[
+                {"role": "system", "content": HAKEM_ROL_TANIMI},
+                {
+                    "role": "user",
+                    "content": f"KURAL METNİ:\n{baglam_metni}\n\nHAKEMİN SAHADA KARŞILAŞTIĞI OLAY:\n{olay_metni}\n\nGÖREV:\nHakemin sahada vermesi gereken kararı ve usulü net şekilde açıkla."
+                }
+            ],
+            temperature=0.3,
+            max_tokens=900,
+            stream=True
+        )
+        for chunk in completion:
+            delta = chunk.choices[0].delta.content
+            if delta:
+                yield delta
+    except Exception as e:
+        yield f"⚠️ Groq Hatası: {str(e)}"
             messages=[
                 {"role": "system", "content": HAKEM_ROL_TANIMI},
                 {
