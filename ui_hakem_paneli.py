@@ -14,13 +14,16 @@ def supabase_baglantisi_kur():
     return create_client(url, key)
 
 HAKEM_ROL_TANIMI = (
-    "Sen tenisi çok iyi bilen, sporculara rehberlik eden kıdemli bir tenis kural danışmanı ve mentorusun. "
-    "ÇOK ÖNEMLİ KURAL: Sen yalnızca ve kesinlikle sana sunulan 'RESMİ KURAL METNİ'ne bağlı kalarak konuşmak zorundasın. "
-    "Kendi genel tenis bilginle, ezberindeki genel ITF/ATP kurallarıyla veya metinde açıkça yazmayan varsayımlarla ASLA yorum yapma. "
-    "Açıklamalarını sporcunun rahatça anlayacağı, öğretici, samimi ve akıcı bir dille yap; ancak anlattığın her cümlenin dayanağı "
-    "MUTLAKA sana sağlanan kural metnindeki ifadeler olmalıdır. "
-    "Eğer sporcunun sorduğu durum veya detay sağlanan kural metninde doğrudan yer almıyorsa, genel bilginden uydurma; "
-    "'Sunulan kural sayfasında bu durumla ilgili doğrudan bir hüküm yer almamaktadır' diyerek sadece metinde olan kısmı açıkla."
+    "Sen uluslararası düzeyde görev yapan kıdemli bir Tenis Başhakemi ve Kural Uzmanısın. "
+    "Sana sunulan 'RESMİ KURAL METNİ' dışına asla çıkma. Genel tenis ezberlerini ve varsayımlarını unut. "
+    "Cevaplarını kesinlikle HİKAYELEŞTİRMEDEN, gereksiz laf kalabalığı yapmadan, net 2 ana başlık halinde yapılandır:\n\n"
+    "### 1. SAHADA ANINDA VERİLECEK KARAR VE USUL\n"
+    "- Hakemin/oyuncunun sahada o an atması gereken adımları madde madde (1, 2, 3...) kısa, net ve operasyonel olarak yaz.\n\n"
+    "### 2. KURAL VE TALİMAT DAYANAĞI (Madde & Sayfa Referansı)\n"
+    "- Bu kararın sunulan metindeki tam dayanağını belirt.\n"
+    "- Varsa Belge Adı, Kural/Madde No, Başlık ve Sayfa Numarasını açıkça yaz.\n"
+    "- Kitapçıktaki ilgili kural cümlesini/hükmünü tırnak içinde doğrudan alıntılayarak göster.\n"
+    "- Metinde doğrudan yazmayan hiçbir ceza veya kuralı dışarıdan uydurma."
 )
 
 def gemini_modeli_ayarla():
@@ -30,7 +33,7 @@ def gemini_modeli_ayarla():
             model_name='gemini-flash-latest',
             system_instruction=HAKEM_ROL_TANIMI,
             generation_config={
-                "temperature": 0.0,
+                "temperature": 0.2,
                 "max_output_tokens": 900
             }
         )
@@ -48,16 +51,17 @@ def groq_istemcisi_ayarla():
 def gemini_ile_coz(model, baglam_metni, olay_metni):
     try:
         prompt = f"""
-        AŞAĞIDAKİ METİN DIŞINA ÇIKMA. GENEL BİLGİNLE YORUM YAPMA:
+        AŞAĞIDAKİ METNE KESİNLİKLE BAĞLI KAL:
         
         RESMİ KURAL METNİ:
         {baglam_metni}
 
-        SPORCUNUN MERAK ETTİĞİ OLAY / SORU:
+        SAHADA YAŞANAN DURUM / SORU:
         "{olay_metni}"
 
         GÖREV:
-        Yalnızca yukarıdaki kural metninde geçen hükümlere sadık kalarak, sporcuya bu kuralın sahadaki işleyişini samimi ve öğretici bir dille anlat. Metinde yazmayan bir kuralı veya cezayı ekleme.
+        1. 'SAHADA ANINDA VERİLECEK KARAR VE USUL': Hikaye anlatmadan, doğrudan uygulanacak adımları listele.
+        2. 'KURAL VE TALİMAT DAYANAĞI': Sayfa no, madde no ve metindeki ilgili cümleyi referans göstererek açıkla.
         """
         response = model.generate_content(prompt, stream=True)
         for chunk in response:
@@ -83,18 +87,15 @@ def groq_ile_coz(client, baglam_metni, olay_metni):
                     {
                         "role": "user",
                         "content": (
-                            "DİKKAT: Genel tenis kurallarını veya varsayımlarını unut. Cevabını SADECE ve SADECE "
-                            "aşağıda verilen 'RESMİ KURAL METNİ'ndeki bilgilere dayandırarak oluştur.\n\n"
                             f"RESMİ KURAL METNİ:\n{baglam_metni}\n\n"
-                            f"SPORCUNUN MERAK ETTİĞİ OLAY / SORU:\n{olay_metni}\n\n"
+                            f"SAHADA YAŞANAN DURUM / SORU:\n{olay_metni}\n\n"
                             "GÖREV:\n"
-                            "1. Yalnızca yukarıdaki kural metnindeki maddelere ve ifadelere sadık kal.\n"
-                            "2. Bir sporcunun kolayca anlayacağı samimi, net ve öğretici bir üslup kullan.\n"
-                            "3. Metinde geçmeyen hiçbir kuralı veya cezayı dışarıdan ekleme."
+                            "1. 'SAHADA ANINDA VERİLECEK KARAR VE USUL' başlığı altında hikayesiz, doğrudan operasyonel adımları yaz.\n"
+                            "2. 'KURAL VE TALİMAT DAYANAĞI' başlığı altında metindeki kural adı, madde no, sayfa no ve ilgili alıntıyı eksiksiz ver."
                         )
                     }
                 ],
-                temperature=0.1,  # Sıfır yaratıcılık, mutlak metin sadakati
+                temperature=0.2,
                 max_tokens=900,
                 stream=True
             )
@@ -111,7 +112,7 @@ def groq_ile_coz(client, baglam_metni, olay_metni):
 
 def hakem_panelini_ciz():
     st.title("Başhakem Dijital Asistanı")
-    st.markdown("Kural arayın, talimatları inceleyin veya **merak ettiğiniz kuralı Yapay Zekaya anlattırın.**")
+    st.markdown("Kural arayın, talimatları inceleyin veya **sahadaki durumu doğrudan resmi kural dayanağıyla çözün.**")
     st.caption('💡 **İpucu:** Tam kelime aramak için tırnak içine alabilirsiniz: `"or"`, `"let"`')
     st.markdown("---")
 
@@ -320,30 +321,30 @@ def hakem_panelini_ciz():
                         else:
                             st.markdown(f"**İlgili Bağlam:**<br>...{metin[:300]}...", unsafe_allow_html=True)
 
-                        # Sporcu odaklı soru/öğrenme alanı
-                        st.markdown(f"**🎾 {sayfa_no}. Sayfa Kuralını Sporcu Bakışıyla Yorumlat**")
-                        ai_soru = st.text_input("Kural hakkında merak ettiğiniz durumu veya senaryoyu yazın:", key=f"soru_{idx}")
+                        # Sahadaki Durum & Resmi Kural Dayanağı Girişi
+                        st.markdown(f"**⚖️ {sayfa_no}. Sayfaya Göre Olayı Çöz ve Dayanaklandır**")
+                        ai_soru = st.text_input("Sahada karşılaşılan pozisyon / soru:", key=f"soru_{idx}")
 
                         btn_col1, btn_col2 = st.columns(2)
 
                         with btn_col1:
-                            if st.button("⚡ Groq ile Kuralı Açıkla", key=f"groq_{idx}", use_container_width=True):
+                            if st.button("⚡ Groq ile Analiz Et", key=f"groq_{idx}", use_container_width=True):
                                 if not ai_soru:
-                                    st.warning("Lütfen merak ettiğiniz durumu yazın.")
+                                    st.warning("Lütfen pozisyonu yazın.")
                                 elif not groq_client:
                                     st.error("Groq API anahtarı ayarlanmamış.")
                                 else:
-                                    st.success("🎾 **Mentor Açıklaması (Groq):**")
+                                    st.markdown("---")
                                     st.write_stream(groq_ile_coz(groq_client, metin, ai_soru))
 
                         with btn_col2:
-                            if st.button("✨ Gemini ile Kuralı Açıkla", key=f"gemini_{idx}", use_container_width=True):
+                            if st.button("✨ Gemini ile Analiz Et", key=f"gemini_{idx}", use_container_width=True):
                                 if not ai_soru:
-                                    st.warning("Lütfen merak ettiğiniz durumu yazın.")
+                                    st.warning("Lütfen pozisyonu yazın.")
                                 elif not gemini_model:
                                     st.error("Gemini API anahtarı ayarlanmamış.")
                                 else:
-                                    st.success("🎾 **Mentor Açıklaması (Gemini):**")
+                                    st.markdown("---")
                                     st.write_stream(gemini_ile_coz(gemini_model, metin, ai_soru))
 
                         st.markdown("---")
@@ -352,8 +353,8 @@ def hakem_panelini_ciz():
 
     # ------------------ 2. GENEL YAPAY ZEKA SEKMESİ ------------------
     with sekme_ai:
-        st.subheader("🎾 Tenis Kural Danışmanı")
-        st.markdown("Kafanıza takılan bir kuralı veya maç senaryosunu yazın; seçtiğiniz talimat metnine sadık kalarak açıklayalım.")
+        st.subheader("⚖️ Başhakem Olay ve Kural Danışmanı")
+        st.markdown("Olayı yazın; seçtiğiniz talimat metnine sadık kalarak operasyonel adımları ve madde dayanaklarını sunalım.")
 
         if st.session_state.aktif_kategori == "Kategori Seçilmedi" or st.session_state.aktif_kategori == "Tüm Talimatlar":
             st.warning("Lütfen arama sekmesinden taranacak tek bir kategori belirleyin.")
@@ -373,11 +374,11 @@ def hakem_panelini_ciz():
             except Exception:
                 pass
 
-            genel_olay = st.text_area("Merak ettiğiniz durumu detaylandırın:", height=100)
+            genel_olay = st.text_area("Sahada yaşanan olayı detaylandırın:", height=100)
             g_col1, g_col2 = st.columns(2)
 
-            calistir_groq = g_col1.button("⚡ Groq ile Detaylı Anlat", use_container_width=True, type="primary")
-            calistir_gemini = g_col2.button("✨ Gemini ile Detaylı Anlat", use_container_width=True)
+            calistir_groq = g_col1.button("⚡ Groq ile Analiz Et", use_container_width=True, type="primary")
+            calistir_gemini = g_col2.button("✨ Gemini ile Analiz Et", use_container_width=True)
 
             if (calistir_groq or calistir_gemini) and genel_olay:
                 if not ai_secilen_dosyalar and mevcut_belgeler_ai:
@@ -405,13 +406,13 @@ def hakem_panelini_ciz():
 
                         if calistir_groq:
                             if groq_client:
-                                st.success("🎾 **Mentor Açıklaması (Groq):**")
+                                st.markdown("---")
                                 st.write_stream(groq_ile_coz(groq_client, baglam_metni, genel_olay))
                             else:
                                 st.error("Groq API anahtarı bulunamadı.")
                         elif calistir_gemini:
                             if gemini_model:
-                                st.success("🎾 **Mentor Açıklaması (Gemini):**")
+                                st.markdown("---")
                                 st.write_stream(gemini_ile_coz(gemini_model, baglam_metni, genel_olay))
                             else:
                                 st.error("Gemini API anahtarı bulunamadı.")
