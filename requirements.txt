@@ -6,3 +6,4 @@ google-generativeai
 pillow
 supabase
 google-generativeai
+groq
