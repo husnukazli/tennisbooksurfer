@@ -100,6 +100,7 @@ def groq_ile_coz(client, baglam_metni, olay_metni):
 def hakem_panelini_ciz():
     st.title("Başhakem Dijital Asistanı")
     st.markdown("Kural arayın, kütüphaneyi inceleyin veya **bulduğunuz kuralı doğrudan Yapay Zekaya yorumlatın.**")
+    st.caption('💡 **İpucu:** Sadece tam kelime aramak için tırnak kullanabilirsiniz: `"or"`, `"let"`')
     st.markdown("---")
 
     try:
@@ -177,30 +178,40 @@ def hakem_panelini_ciz():
                 st.session_state.arama_sonuclari = None
             if "aranan_terimler" not in st.session_state:
                 st.session_state.aranan_terimler = None
+            if "tam_kelime_modu" not in st.session_state:
+                st.session_state.tam_kelime_modu = False
 
-            aranan_kelime = st.chat_input("Aranacak kelimeyi yazın (veya mikrofona dokunun)...")
+            aranan_ham = st.chat_input('Aranacak kelimeyi yazın (Tam kelime için: "or")...')
 
-            if aranan_kelime:
+            if aranan_ham:
                 if not secilen_dosyalar and mevcut_belgeler:
                     st.error("Lütfen arama yapmak için en az bir belge işaretleyin!")
                 else:
                     with st.chat_message("user"):
-                        st.write(aranan_kelime)
+                        st.write(aranan_ham)
 
                     with st.spinner("Seçili belgelerde taranıyor..."):
                         try:
-                            aranan_ilk = aranan_kelime.lower().strip()
+                            ham_metin = aranan_ham.strip()
+                            # Tırnak kontrolü: "or" şeklinde girilmişse tam kelime modu aktif olur
+                            tam_kelime = False
+                            if (ham_metin.startswith('"') and ham_metin.endswith('"')) or \
+                               (ham_metin.startswith("'") and ham_metin.endswith("'")):
+                                tam_kelime = True
+                                aranan_ilk = ham_metin[1:-1].lower().strip()
+                            else:
+                                aranan_ilk = ham_metin.lower().strip()
+
                             aranan_ilk = re.sub(r'\s+', ' ', aranan_ilk)
-                            
-                            # Başlangıçta sadece kullanıcının girdiği kelimeyi alıyoruz
+                            st.session_state.tam_kelime_modu = tam_kelime
+
                             temel_terimler = {aranan_ilk}
 
-                            # SADECE TÜRKÇE -> İNGİLİZCE (TEK YÖNLÜ ÇALIŞMA)
-                            # Kullanıcı Türkçe yazdıysa İngilizcesini de ekle;
-                            # Ancak İngilizce yazdıysa Türkçe kelimeleri ekleme!
-                            for tr_key, en_list in TENNIS_SOZLugu.items():
-                                if aranan_ilk == tr_key:
-                                    temel_terimler.update(en_list)
+                            # Tırnaklı arama yapılmadıysa ve terim Türkçe anahtar ise İngilizcesini ekle
+                            if not tam_kelime:
+                                for tr_key, en_list in TENNIS_SOZLugu.items():
+                                    if aranan_ilk == tr_key:
+                                        temel_terimler.update(en_list)
 
                             aranacak_terimler = set()
                             for terim in temel_terimler:
@@ -216,10 +227,24 @@ def hakem_panelini_ciz():
 
                             sorgu = supabase.table("kural_icerikleri").select("dosya_adi, kategori, sayfa_no, dosya_url, icerik")
                             sorgu = sorgu.in_("dosya_adi", secilen_dosyalar)
+                            
+                            # SQL seviyesinde filtre
                             filtre_parcalari = [f"icerik.ilike.%{terim}%" for terim in aranacak_terimler_listesi]
                             sorgu = sorgu.or_(",".join(filtre_parcalari))
 
-                            st.session_state.arama_sonuclari = sorgu.execute().data
+                            ham_sonuclar = sorgu.execute().data
+
+                            # Eğer tam kelime ("or") aranmışsa, Python tarafında regex tam sözcük (\b) kontrolü
+                            if tam_kelime:
+                                filtrelenmis_sonuclar = []
+                                regex_kalip = re.compile(rf'\b{re.escape(aranan_ilk)}\b', re.IGNORECASE)
+                                for k in ham_sonuclar:
+                                    if regex_kalip.search(k['icerik']):
+                                        filtrelenmis_sonuclar.append(k)
+                                st.session_state.arama_sonuclari = filtrelenmis_sonuclar
+                            else:
+                                st.session_state.arama_sonuclari = ham_sonuclar
+
                             st.session_state.aranan_terimler = aranacak_terimler_listesi
                         except Exception as e:
                             st.error(f"Arama sırasında hata oluştu: {e}")
@@ -227,6 +252,7 @@ def hakem_panelini_ciz():
             if st.session_state.arama_sonuclari is not None:
                 sonuclar = st.session_state.arama_sonuclari
                 aranacak_terimler_listesi = st.session_state.aranan_terimler
+                tam_kelime = st.session_state.tam_kelime_modu
 
                 if sonuclar:
                     st.success(f"Bulunan ilgili sayfa sayısı: {len(sonuclar)}")
@@ -242,11 +268,17 @@ def hakem_panelini_ciz():
                         metin = kayit['icerik']
                         metin_lower = metin.lower()
 
+                        # En uygun eşleşen terimi bulma
                         bulunan_varyasyon = aranacak_terimler_listesi[0]
                         for varyasyon in aranacak_terimler_listesi:
-                            if varyasyon in metin_lower:
-                                bulunan_varyasyon = varyasyon
-                                break
+                            if tam_kelime:
+                                if re.search(rf'\b{re.escape(varyasyon)}\b', metin_lower):
+                                    bulunan_varyasyon = varyasyon
+                                    break
+                            else:
+                                if varyasyon in metin_lower:
+                                    bulunan_varyasyon = varyasyon
+                                    break
 
                         if pdf_url:
                             url_kodlu_terim = urllib.parse.quote(f'"{bulunan_varyasyon}"')
@@ -259,12 +291,26 @@ def hakem_panelini_ciz():
                                 unsafe_allow_html=True
                             )
 
-                        idx_text = metin_lower.find(bulunan_varyasyon)
+                        # Önizleme kesiti ve kelime fosforlama
+                        if tam_kelime:
+                            match = re.search(rf'\b{re.escape(bulunan_varyasyon)}\b', metin, re.IGNORECASE)
+                            if match:
+                                idx_text = match.start()
+                            else:
+                                idx_text = -1
+                        else:
+                            idx_text = metin_lower.find(bulunan_varyasyon)
+
                         if idx_text != -1:
                             baslangic = max(0, idx_text - 120)
                             bitis = min(len(metin), idx_text + 350)
                             kesit = metin[baslangic:bitis].replace("\n", " ")
-                            pattern = re.compile(re.escape(bulunan_varyasyon), re.IGNORECASE)
+                            
+                            if tam_kelime:
+                                pattern = re.compile(rf'\b({re.escape(bulunan_varyasyon)})\b', re.IGNORECASE)
+                            else:
+                                pattern = re.compile(re.escape(bulunan_varyasyon), re.IGNORECASE)
+                                
                             vurgulu_kesit = pattern.sub(lambda m: f'<span style="background-color: #39ff14; color: #000000; font-weight: bold; padding: 2px 4px; border-radius: 3px;">{m.group(0)}</span>', kesit)
                             st.markdown(f"**İlgili Bağlam:**<br>...{vurgulu_kesit}...", unsafe_allow_html=True)
                         else:
