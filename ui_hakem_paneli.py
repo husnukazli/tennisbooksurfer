@@ -66,7 +66,7 @@ def gemini_ile_coz(model, baglam_metni, olay_metni):
 def groq_ile_coz(client, baglam_metni, olay_metni):
     try:
         completion = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+            model="llama3-70b-8192",
             messages=[
                 {"role": "system", "content": HAKEM_ROL_TANIMI},
                 {
