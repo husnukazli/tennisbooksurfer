@@ -14,13 +14,13 @@ def supabase_baglantisi_kur():
     return create_client(url, key)
 
 HAKEM_ROL_TANIMI = (
-    "Sen tenisi çok iyi bilen, oyunun ruhuna ve kuralların gerekçelerine hakim kıdemli bir tenis mentoru ve uluslararası bir başhakemsin. "
-    "Karşında kuralı merak eden, kendini geliştirmek isteyen bir tenis sporcusu / oyuncusu var. "
-    "Telsiz anonsu gibi kuru, emredici, telaşlı veya sadece ceza odaklı bir hakem üslubu KULLANMA. "
-    "Tersine; son derece samimi, anlaşılır, öğretici ve profesyonel bir dille konuş. "
-    "Kuralın sahada nasıl uygulandığını, bu kuralın neden var olduğunu (oyun adaletini nasıl sağladığını) "
-    "ve sporcunun sahada benzer bir durumda ne beklemesi/nasıl davranması gerektiğini bir antrenör gibi açıkla. "
-    "Gerekirse metindeki kural ve madde referansını da sporcuya rehberlik edecek şekilde nazikçe belirt."
+    "Sen tenisi çok iyi bilen, sporculara rehberlik eden kıdemli bir tenis kural danışmanı ve mentorusun. "
+    "ÇOK ÖNEMLİ KURAL: Sen yalnızca ve kesinlikle sana sunulan 'RESMİ KURAL METNİ'ne bağlı kalarak konuşmak zorundasın. "
+    "Kendi genel tenis bilginle, ezberindeki genel ITF/ATP kurallarıyla veya metinde açıkça yazmayan varsayımlarla ASLA yorum yapma. "
+    "Açıklamalarını sporcunun rahatça anlayacağı, öğretici, samimi ve akıcı bir dille yap; ancak anlattığın her cümlenin dayanağı "
+    "MUTLAKA sana sağlanan kural metnindeki ifadeler olmalıdır. "
+    "Eğer sporcunun sorduğu durum veya detay sağlanan kural metninde doğrudan yer almıyorsa, genel bilginden uydurma; "
+    "'Sunulan kural sayfasında bu durumla ilgili doğrudan bir hüküm yer almamaktadır' diyerek sadece metinde olan kısmı açıkla."
 )
 
 def gemini_modeli_ayarla():
@@ -30,7 +30,7 @@ def gemini_modeli_ayarla():
             model_name='gemini-flash-latest',
             system_instruction=HAKEM_ROL_TANIMI,
             generation_config={
-                "temperature": 0.4,
+                "temperature": 0.0,
                 "max_output_tokens": 900
             }
         )
@@ -48,7 +48,8 @@ def groq_istemcisi_ayarla():
 def gemini_ile_coz(model, baglam_metni, olay_metni):
     try:
         prompt = f"""
-        Aşağıda resmi tenis talimatı/kural sayfasından bir kesit yer alıyor:
+        AŞAĞIDAKİ METİN DIŞINA ÇIKMA. GENEL BİLGİNLE YORUM YAPMA:
+        
         RESMİ KURAL METNİ:
         {baglam_metni}
 
@@ -56,7 +57,7 @@ def gemini_ile_coz(model, baglam_metni, olay_metni):
         "{olay_metni}"
 
         GÖREV:
-        Bu kuralı bir sporcunun kolayca kavrayabileceği şekilde; mantığını, oyundaki yerini ve sahada böyle bir durum olduğunda ne yaşanacağını açık, akıcı ve samimi bir dille anlat.
+        Yalnızca yukarıdaki kural metninde geçen hükümlere sadık kalarak, sporcuya bu kuralın sahadaki işleyişini samimi ve öğretici bir dille anlat. Metinde yazmayan bir kuralı veya cezayı ekleme.
         """
         response = model.generate_content(prompt, stream=True)
         for chunk in response:
@@ -82,13 +83,18 @@ def groq_ile_coz(client, baglam_metni, olay_metni):
                     {
                         "role": "user",
                         "content": (
+                            "DİKKAT: Genel tenis kurallarını veya varsayımlarını unut. Cevabını SADECE ve SADECE "
+                            "aşağıda verilen 'RESMİ KURAL METNİ'ndeki bilgilere dayandırarak oluştur.\n\n"
                             f"RESMİ KURAL METNİ:\n{baglam_metni}\n\n"
                             f"SPORCUNUN MERAK ETTİĞİ OLAY / SORU:\n{olay_metni}\n\n"
-                            f"GÖREV:\nBu kuralı bir sporcunun kolayca anlayabileceği şekilde; mantığını, sahadaki yansımasını ve bu kuralın arkasındaki nedeni samimi ve öğretici bir dille açıkla."
+                            "GÖREV:\n"
+                            "1. Yalnızca yukarıdaki kural metnindeki maddelere ve ifadelere sadık kal.\n"
+                            "2. Bir sporcunun kolayca anlayacağı samimi, net ve öğretici bir üslup kullan.\n"
+                            "3. Metinde geçmeyen hiçbir kuralı veya cezayı dışarıdan ekleme."
                         )
                     }
                 ],
-                temperature=0.4,
+                temperature=0.1,  # Sıfır yaratıcılık, mutlak metin sadakati
                 max_tokens=900,
                 stream=True
             )
@@ -347,7 +353,7 @@ def hakem_panelini_ciz():
     # ------------------ 2. GENEL YAPAY ZEKA SEKMESİ ------------------
     with sekme_ai:
         st.subheader("🎾 Tenis Kural Danışmanı")
-        st.markdown("Kafanıza takılan bir kuralı veya maç senaryosunu yazın; bir sporcunun en rahat anlayacağı şekilde anlatalım.")
+        st.markdown("Kafanıza takılan bir kuralı veya maç senaryosunu yazın; seçtiğiniz talimat metnine sadık kalarak açıklayalım.")
 
         if st.session_state.aktif_kategori == "Kategori Seçilmedi" or st.session_state.aktif_kategori == "Tüm Talimatlar":
             st.warning("Lütfen arama sekmesinden taranacak tek bir kategori belirleyin.")
@@ -367,7 +373,7 @@ def hakem_panelini_ciz():
             except Exception:
                 pass
 
-            genel_olay = st.text_area("Merak ettiğiniz durumu detaylandırın (Örn: Servis atarken top tavana değerse ne olur?):", height=100)
+            genel_olay = st.text_area("Merak ettiğiniz durumu detaylandırın:", height=100)
             g_col1, g_col2 = st.columns(2)
 
             calistir_groq = g_col1.button("⚡ Groq ile Detaylı Anlat", use_container_width=True, type="primary")
