@@ -6,12 +6,18 @@ import unicodedata
 import re
 from supabase import create_client, Client
 
+st.set_page_config(
+    page_title="Yönetim Paneli",
+    page_icon="⚙️",
+    layout="wide",
+    initial_sidebar_state="collapsed"
+)
+
 def supabase_baglantisi_kur():
     url = st.secrets["supabase"]["url"]
     key = st.secrets["supabase"]["key"]
     return create_client(url, key)
 
-# Türkçe karakterleri ve boşlukları temizleyerek Supabase uyumlu hale getiren fonksiyon
 def dosya_adini_duzenle(dosya_adi):
     if "." in dosya_adi:
         isim, uzanti = dosya_adi.rsplit(".", 1)
@@ -73,14 +79,11 @@ else:
                     dosya_verisi = dosya.read()
                     
                     try:
-                        # 1. Veritabanındaki eski metin kayıtlarını temizle
                         supabase.table("kural_icerikleri").delete().eq("dosya_adi", temiz_dosya_adi).execute()
                         
-                        # 2. ÜZERİNE YAZMA (UPSERT) KOMUTU EKLENDİ! 
-                        # Bu sayede depoda eski/hayalet dosya varsa bile 409 hatası vermeyip acımasızca ezecek.
                         file_options = {
                             "content-type": "application/pdf",
-                            "x-upsert": "true"  # İşte 409 hatasını tarihe gömen sihirli satır!
+                            "x-upsert": "true"
                         }
                         
                         supabase.storage.from_("Belgeler").upload(
