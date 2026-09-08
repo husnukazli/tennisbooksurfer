@@ -191,11 +191,15 @@ def hakem_panelini_ciz():
                         try:
                             aranan_ilk = aranan_kelime.lower().strip()
                             aranan_ilk = re.sub(r'\s+', ' ', aranan_ilk)
+                            
+                            # Başlangıçta sadece kullanıcının girdiği kelimeyi alıyoruz
                             temel_terimler = {aranan_ilk}
 
+                            # SADECE TÜRKÇE -> İNGİLİZCE (TEK YÖNLÜ ÇALIŞMA)
+                            # Kullanıcı Türkçe yazdıysa İngilizcesini de ekle;
+                            # Ancak İngilizce yazdıysa Türkçe kelimeleri ekleme!
                             for tr_key, en_list in TENNIS_SOZLugu.items():
-                                if aranan_ilk == tr_key or aranan_ilk in en_list:
-                                    temel_terimler.add(tr_key)
+                                if aranan_ilk == tr_key:
                                     temel_terimler.update(en_list)
 
                             aranacak_terimler = set()
