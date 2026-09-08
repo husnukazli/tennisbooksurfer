@@ -64,26 +64,38 @@ def gemini_ile_coz(model, baglam_metni, olay_metni):
         yield f"⚠️ Gemini Hatası: {str(e)}"
 
 def groq_ile_coz(client, baglam_metni, olay_metni):
-    try:
-        completion = client.chat.completions.create(
-            model="llama3-70b-8192",
-            messages=[
-                {"role": "system", "content": HAKEM_ROL_TANIMI},
-                {
-                    "role": "user",
-                    "content": f"KURAL METNİ:\n{baglam_metni}\n\nHAKEMİN SAHADA KARŞILAŞTIĞI OLAY:\n{olay_metni}\n\nGÖREV:\nHakemin sahada vermesi gereken kararı ve usulü net şekilde açıkla."
-                }
-            ],
-            temperature=0.3,
-            max_tokens=900,
-            stream=True
-        )
-        for chunk in completion:
-            delta = chunk.choices[0].delta.content
-            if delta:
-                yield delta
-    except Exception as e:
-        yield f"⚠️ Groq Hatası: {str(e)}"
+    guncel_modeller = [
+        "openai/gpt-oss-120b",
+        "openai/gpt-oss-20b",
+        "qwen/qwen3.6-27b"
+    ]
+    
+    son_hata = None
+    for model_adi in guncel_modeller:
+        try:
+            completion = client.chat.completions.create(
+                model=model_adi,
+                messages=[
+                    {"role": "system", "content": HAKEM_ROL_TANIMI},
+                    {
+                        "role": "user",
+                        "content": f"KURAL METNİ:\n{baglam_metni}\n\nHAKEMİN SAHADA KARŞILAŞTIĞI OLAY:\n{olay_metni}\n\nGÖREV:\nHakemin sahada vermesi gereken kararı ve usulü net şekilde açıkla."
+                    }
+                ],
+                temperature=0.3,
+                max_tokens=900,
+                stream=True
+            )
+            for chunk in completion:
+                delta = chunk.choices[0].delta.content
+                if delta:
+                    yield delta
+            return
+        except Exception as e:
+            son_hata = str(e)
+            continue
+            
+    yield f"⚠️ Groq Hatası: {son_hata}"
 
 def hakem_panelini_ciz():
     st.title("Başhakem Dijital Asistanı")
@@ -260,7 +272,7 @@ def hakem_panelini_ciz():
                         btn_col1, btn_col2 = st.columns(2)
 
                         with btn_col1:
-                            if st.button("⚡ Groq (Llama 3) ile Çöz", key=f"groq_{idx}", use_container_width=True):
+                            if st.button("⚡ Groq ile Çöz", key=f"groq_{idx}", use_container_width=True):
                                 if not ai_soru:
                                     st.warning("Lütfen olayı yazın.")
                                 elif not groq_client:
