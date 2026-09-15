@@ -71,14 +71,38 @@ def gemini_ile_coz(model, baglam_metni, olay_metni):
         yield f"⚠️ Gemini Hatası: {str(e)}"
 
 def groq_ile_coz(client, baglam_metni, olay_metni):
-    guncel_modeller = [
+    # Hesabınızdaki aktif ve erişilebilir modelleri dinamik olarak sorguluyoruz
+    aktif_modeller = []
+    try:
+        modeller_cevap = client.models.list()
+        for m in modeller_cevap.data:
+            m_id = m.id.lower()
+            # Ses, konuşma veya güvenlik modellerini filtrele; yalnızca metin modellerini al
+            if not any(yasak in m_id for yasak in ["whisper", "tts", "guard", "safeguard", "orpheus"]):
+                aktif_modeller.append(m.id)
+    except Exception:
+        aktif_modeller = []
+
+    # Öncelikli denenecek güncel modeller
+    oncelik_sirasi = [
         "openai/gpt-oss-120b",
         "openai/gpt-oss-20b",
-        "qwen/qwen3.6-27b"
+        "qwen/qwen3.6-27b",
+        "llama-3.3-70b-versatile",
+        "llama-3.1-8b-instant"
     ]
-    
+
+    # Hesaptaki modelleri öncelik sırasına göre diz
+    denenecek_modeller = [m for m in oncelik_sirasi if m in aktif_modeller]
+    # Hesaptaki diğer tüm metin modellerini de listenin sonuna yedek olarak ekle
+    denenecek_modeller += [m for m in aktif_modeller if m not in denenecek_modeller]
+
+    # Eğer liste çekilemediyse varsayılan listeyi doğrudan dene
+    if not denenecek_modeller:
+        denenecek_modeller = oncelik_sirasi
+
     son_hata = None
-    for model_adi in guncel_modeller:
+    for model_adi in denenecek_modeller:
         try:
             completion = client.chat.completions.create(
                 model=model_adi,
@@ -103,12 +127,12 @@ def groq_ile_coz(client, baglam_metni, olay_metni):
                 delta = chunk.choices[0].delta.content
                 if delta:
                     yield delta
-            return
+            return  # Başarılı şekilde yanıt akışı tamamlandı
         except Exception as e:
-            son_hata = str(e)
+            son_hata = f"{model_adi} ({str(e)})"
             continue
-            
-    yield f"⚠️ Groq Hatası: {son_hata}"
+
+    yield f"⚠️ Groq Hatası: Hesabınızda uygun model çalıştırılamadı. Detay: {son_hata}"
 
 def arama_durumunu_sifirla():
     st.session_state.arama_sonuclari = None
@@ -116,7 +140,6 @@ def arama_durumunu_sifirla():
     st.session_state.son_aranan = ""
 
 def hakem_panelini_ciz():
-    # Modern Özel CSS
     st.markdown("""
         <style>
         .badge-cat {
@@ -175,7 +198,6 @@ def hakem_panelini_ciz():
     gemini_model = gemini_modeli_ayarla()
     groq_client = groq_istemcisi_ayarla()
 
-    # Session State Başlatma
     if 'aktif_kategori' not in st.session_state:
         st.session_state.aktif_kategori = "ITF Kuralları"
     if 'arama_sonuclari' not in st.session_state:
@@ -191,7 +213,6 @@ def hakem_panelini_ciz():
 
     # ==================== 1. KURAL ARAMA SEKMESİ ====================
     with sekme_arama:
-        # Sonuçlar varsa filtre panelini otomatik daralt (Focus Modu)
         sonuclar_mevcut = st.session_state.arama_sonuclari is not None
         
         with st.expander("⚙️ Talimat Kategorisi & Belge Filtresi", expanded=not sonuclar_mevcut):
@@ -218,7 +239,6 @@ def hakem_panelini_ciz():
                 arama_durumunu_sifirla()
                 st.rerun()
 
-            # Belge Filtresi
             secilen_dosyalar = []
             try:
                 sorgu_belgeler = supabase.table("kural_icerikleri").select("dosya_adi")
@@ -241,7 +261,6 @@ def hakem_panelini_ciz():
             except Exception:
                 st.error("Belgeler yüklenemedi.")
 
-        # --- Arama Çubuğu ve Temizleme Alanı ---
         col_info, col_reset = st.columns([4, 1])
         with col_info:
             st.markdown(f"Aktif Kategori: <span class='badge-cat'>{st.session_state.aktif_kategori}</span> ({len(secilen_dosyalar)} Belge Aktif)", unsafe_allow_html=True)
@@ -251,22 +270,19 @@ def hakem_panelini_ciz():
                     arama_durumunu_sifirla()
                     st.rerun()
 
-        # Arama Giriş Formu
         with st.form("arama_formu", clear_on_submit=False):
             f_col1, f_col2 = st.columns([5, 1])
             with f_col1:
                 arama_metni = st.text_input(
                     "Aranacak terimi yazın:",
                     value=st.session_state.son_aranan,
-                    placeholder='Örn: ayak hatası, toilet break veya sadece tam kelime için: "or", "let"',
+                    placeholder='Örn: ayak hatası, toilet break veya tam kelime için: "or", "let"',
                     label_visibility="collapsed"
                 )
             with f_col2:
                 ara_tiklandi = st.form_submit_button("🔍 Ara", use_container_width=True, type="primary")
 
-        # Arama Tetiklendiğinde
         if ara_tiklandi and arama_metni.strip():
-            # Önceki sonuçları ve session durumlarını temizle
             arama_durumunu_sifirla()
             st.session_state.son_aranan = arama_metni.strip()
 
@@ -289,7 +305,6 @@ def hakem_panelini_ciz():
 
                         temel_terimler = {aranan_ilk}
 
-                        # Tek Yönlü Sözlük (TR -> EN)
                         if not tam_kelime:
                             for tr_key, en_list in TENNIS_SOZLugu.items():
                                 if aranan_ilk == tr_key:
@@ -330,7 +345,6 @@ def hakem_panelini_ciz():
                     except Exception as e:
                         st.error(f"Sorgulama sırasında hata oluştu: {e}")
 
-        # --- ARAMA SONUÇLARININ LİSTELENMESİ ---
         if st.session_state.arama_sonuclari is not None:
             sonuclar = st.session_state.arama_sonuclari
             aranacak_terimler_listesi = st.session_state.aranan_terimler or []
@@ -360,7 +374,6 @@ def hakem_panelini_ciz():
                                 bulunan_varyasyon = varyasyon
                                 break
 
-                    # HER SONUÇ İÇİN İZOLE, ŞIK VE ÇERÇEVELİ KART
                     with st.container(border=True):
                         h_col1, h_col2 = st.columns([3, 2])
                         with h_col1:
@@ -379,7 +392,6 @@ def hakem_panelini_ciz():
                                     unsafe_allow_html=True
                                 )
 
-                        # Alıntı ve Fosforlu Vurgu Alanı
                         if tam_kelime:
                             match = re.search(rf'\b{re.escape(bulunan_varyasyon)}\b', metin, re.IGNORECASE)
                             idx_text = match.start() if match else -1
@@ -397,7 +409,6 @@ def hakem_panelini_ciz():
                         else:
                             st.markdown(f"<div class='snippet-box'>...{metin[:350]}...</div>", unsafe_allow_html=True)
 
-                        # AI Alanı: Varsayılan olarak kapalıdır, ekranı doldurmaz
                         with st.expander("⚖️ Bu Sayfa Kuralını Yapay Zekaya Danış (Karar & Madde Dayanağı)"):
                             ai_soru = st.text_input("Sahada karşılaşılan pozisyonu veya tereddüdü yazın:", key=f"q_{idx}")
                             btn_c1, btn_c2 = st.columns(2)
