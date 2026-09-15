@@ -60,8 +60,8 @@ def gemini_ile_coz(model, baglam_metni, olay_metni):
         "{olay_metni}"
 
         GÖREV:
-        1. 'SAHADA ANINDA VERİLECEK KARAR VE USUL': Hikaye anlatmadan, doğrudan uygulanacak adımları listele.
-        2. 'KURAL VE TALİMAT DAYANAĞI': Sayfa no, madde no ve metindeki ilgili cümleyi referans göstererek açıkla.
+        1. 'SAHADA ANINDA VERİLECEK KARAR VE USUL': Hikaye anlatmadan doğrudan uygulanacak adımları listele.
+        2. 'KURAL VE TALİMAT DAYANAĞI': Sayfa no, madde no ve metindeki ilgili alıntıyı referans göster.
         """
         response = model.generate_content(prompt, stream=True)
         for chunk in response:
@@ -90,8 +90,8 @@ def groq_ile_coz(client, baglam_metni, olay_metni):
                             f"RESMİ KURAL METNİ:\n{baglam_metni}\n\n"
                             f"SAHADA YAŞANAN DURUM / SORU:\n{olay_metni}\n\n"
                             "GÖREV:\n"
-                            "1. 'SAHADA ANINDA VERİLECEK KARAR VE USUL' başlığı altında hikayesiz, doğrudan operasyonel adımları yaz.\n"
-                            "2. 'KURAL VE TALİMAT DAYANAĞI' başlığı altında metindeki kural adı, madde no, sayfa no ve ilgili alıntıyı eksiksiz ver."
+                            "1. 'SAHADA ANINDA VERİLECEK KARAR VE USUL' başlığı altında hikayesiz, operasyonel adımları yaz.\n"
+                            "2. 'KURAL VE TALİMAT DAYANAĞI' başlığı altında kural adı, madde no, sayfa no ve ilgili alıntıyı eksiksiz ver."
                         )
                     }
                 ],
@@ -110,196 +110,276 @@ def groq_ile_coz(client, baglam_metni, olay_metni):
             
     yield f"⚠️ Groq Hatası: {son_hata}"
 
+def arama_durumunu_sifirla():
+    st.session_state.arama_sonuclari = None
+    st.session_state.aranan_terimler = None
+    st.session_state.son_aranan = ""
+
 def hakem_panelini_ciz():
-    st.title("Başhakem Dijital Asistanı")
-    st.markdown("Kural arayın, talimatları inceleyin veya **sahadaki durumu doğrudan resmi kural dayanağıyla çözün.**")
-    st.caption('💡 **İpucu:** Tam kelime aramak için tırnak içine alabilirsiniz: `"or"`, `"let"`')
-    st.markdown("---")
+    # Modern Özel CSS
+    st.markdown("""
+        <style>
+        .badge-cat {
+            background-color: #1e293b;
+            color: #38bdf8;
+            padding: 4px 10px;
+            border-radius: 6px;
+            font-size: 0.85rem;
+            font-weight: 600;
+            border: 1px solid #0284c7;
+        }
+        .badge-page {
+            background-color: #14532d;
+            color: #4ade80;
+            padding: 4px 10px;
+            border-radius: 6px;
+            font-size: 0.85rem;
+            font-weight: 600;
+            border: 1px solid #16a34a;
+        }
+        .pdf-btn {
+            background-color: #0f172a;
+            color: #38bdf8 !important;
+            padding: 7px 14px;
+            border-radius: 6px;
+            text-decoration: none;
+            font-weight: 600;
+            font-size: 0.9rem;
+            border: 1px solid #0284c7;
+            display: inline-block;
+            transition: all 0.2s ease;
+        }
+        .pdf-btn:hover {
+            background-color: #0284c7;
+            color: #ffffff !important;
+        }
+        .snippet-box {
+            background-color: #0b0f19;
+            border-left: 3px solid #38bdf8;
+            padding: 12px 16px;
+            border-radius: 0 8px 8px 0;
+            margin: 12px 0;
+            font-family: monospace;
+            font-size: 0.92rem;
+            line-height: 1.6;
+        }
+        </style>
+    """, unsafe_allow_html=True)
 
     try:
         supabase = supabase_baglantisi_kur()
     except Exception:
-        st.error("Supabase bağlantı ayarları yüklenemedi. Lütfen Secrets bölümünü kontrol edin.")
+        st.error("Supabase bağlantı ayarları yüklenemedi. Secrets bölümünü kontrol edin.")
         return
 
     gemini_model = gemini_modeli_ayarla()
     groq_client = groq_istemcisi_ayarla()
 
-    sekme_arama, sekme_ai, sekme_indeks = st.tabs(["🔍 Kural Arama", "🤖 Genel Kural Danışmanı", "📚 Belge İndeksi"])
+    # Session State Başlatma
+    if 'aktif_kategori' not in st.session_state:
+        st.session_state.aktif_kategori = "ITF Kuralları"
+    if 'arama_sonuclari' not in st.session_state:
+        st.session_state.arama_sonuclari = None
+    if 'aranan_terimler' not in st.session_state:
+        st.session_state.aranan_terimler = None
+    if 'tam_kelime_modu' not in st.session_state:
+        st.session_state.tam_kelime_modu = False
+    if 'son_aranan' not in st.session_state:
+        st.session_state.son_aranan = ""
 
-    # ------------------ 1. ARAMA VE ÇİFT YAPAY ZEKA DESTEĞİ ------------------
+    sekme_arama, sekme_ai, sekme_indeks = st.tabs(["🔍 Hızlı Kural Arama", "⚖️ Olay Çözücü AI", "📚 Belge Kütüphanesi"])
+
+    # ==================== 1. KURAL ARAMA SEKMESİ ====================
     with sekme_arama:
-        if 'aktif_kategori' not in st.session_state:
-            st.session_state.aktif_kategori = "Kategori Seçilmedi"
+        # Sonuçlar varsa filtre panelini otomatik daralt (Focus Modu)
+        sonuclar_mevcut = st.session_state.arama_sonuclari is not None
+        
+        with st.expander("⚙️ Talimat Kategorisi & Belge Filtresi", expanded=not sonuclar_mevcut):
+            st.markdown("###### Kategori Belirleyin:")
+            kategoriler = [
+                "ITF Kuralları", "Men's WTT", "Women's WTT", "WTT Juniors",
+                "WTT Masters", "Wheelchair Tour", "Beach Tennis", "Tennis Europe",
+                "ATP", "WTA", "Grand Slam", "TTF Ulusal", "Ulusal Diğer", "Sık Sorulanlar"
+            ]
+            
+            c_cols = st.columns(4)
+            for i, kat in enumerate(kategoriler):
+                with c_cols[i % 4]:
+                    is_active = (st.session_state.aktif_kategori == kat)
+                    btn_type = "primary" if is_active else "secondary"
+                    if st.button(kat, key=f"kat_{kat}", use_container_width=True, type=btn_type):
+                        st.session_state.aktif_kategori = kat
+                        arama_durumunu_sifirla()
+                        st.rerun()
 
-        st.subheader("Kategori Seçin")
-        col1, col2, col3, col4 = st.columns(4)
+            st.markdown("---")
+            if st.button("🌐 Tüm Talimatlarda Aynı Anda Ara (Pro)", type="primary" if st.session_state.aktif_kategori == "Tüm Talimatlar" else "secondary", use_container_width=True):
+                st.session_state.aktif_kategori = "Tüm Talimatlar"
+                arama_durumunu_sifirla()
+                st.rerun()
 
-        with col1:
-            if st.button("ITF Kuralları", key="btn1", use_container_width=True): st.session_state.aktif_kategori = "ITF Kuralları"
-            if st.button("Men's WTT", key="btn2", use_container_width=True): st.session_state.aktif_kategori = "Men's WTT"
-            if st.button("Women's WTT", key="btn3", use_container_width=True): st.session_state.aktif_kategori = "Women's WTT"
-            if st.button("WTT Juniors", key="btn4", use_container_width=True): st.session_state.aktif_kategori = "WTT Juniors"
-
-        with col2:
-            if st.button("WTT Masters", key="btn5", use_container_width=True): st.session_state.aktif_kategori = "WTT Masters"
-            if st.button("Wheelchair Tour", key="btn6", use_container_width=True): st.session_state.aktif_kategori = "Wheelchair Tour"
-            if st.button("Beach Tennis", key="btn7", use_container_width=True): st.session_state.aktif_kategori = "Beach Tennis"
-            if st.button("Tennis Europe", key="btn8", use_container_width=True): st.session_state.aktif_kategori = "Tennis Europe"
-
-        with col3:
-            if st.button("ATP", key="btn9", use_container_width=True): st.session_state.aktif_kategori = "ATP"
-            if st.button("WTA", key="btn10", use_container_width=True): st.session_state.aktif_kategori = "WTA"
-            if st.button("Grand Slam", key="btn11", use_container_width=True): st.session_state.aktif_kategori = "Grand Slam"
-
-        with col4:
-            if st.button("TTF Ulusal", key="btn12", use_container_width=True): st.session_state.aktif_kategori = "TTF Ulusal"
-            if st.button("Ulusal Diğer", key="btn13", use_container_width=True): st.session_state.aktif_kategori = "Ulusal Diğer"
-            if st.button("Sık Sorulanlar", key="btn14", use_container_width=True): st.session_state.aktif_kategori = "Sık Sorulanlar"
-
-        st.markdown("---")
-        if st.button("Tüm Talimatlarda Aynı Anda Ara (Pro)", type="primary", use_container_width=True):
-            st.session_state.aktif_kategori = "Tüm Talimatlar"
-        st.markdown("---")
-
-        if st.session_state.aktif_kategori == "Kategori Seçilmedi":
-            st.warning("Lütfen arama yapmak istediğiniz talimat kategorisini seçin.")
-        else:
-            st.success(f"**Aktif Kategori:** {st.session_state.aktif_kategori}")
-
+            # Belge Filtresi
             secilen_dosyalar = []
             try:
                 sorgu_belgeler = supabase.table("kural_icerikleri").select("dosya_adi")
                 if st.session_state.aktif_kategori != "Tüm Talimatlar":
                     sorgu_belgeler = sorgu_belgeler.eq("kategori", st.session_state.aktif_kategori)
-
+                
                 belge_sonuc = sorgu_belgeler.execute().data
                 mevcut_belgeler = sorted(list(set([row["dosya_adi"] for row in belge_sonuc])))
 
                 if mevcut_belgeler:
-                    st.markdown("###### Aramaya Dahil Edilecek Belgeler:")
-                    tumunu_sec = st.toggle("Hepsini Seç / Kaldır", value=True, key="toggle_arama")
-                    for belge in mevcut_belgeler:
-                        if st.checkbox(belge, value=tumunu_sec, key=f"chk_{belge}"):
-                            secilen_dosyalar.append(belge)
+                    st.markdown("###### Taranacak Belgeler:")
+                    tumunu_sec = st.toggle("Tümünü Seç / Kaldır", value=True, key="toggle_dosyalar")
+                    b_cols = st.columns(2)
+                    for idx, b in enumerate(mevcut_belgeler):
+                        with b_cols[idx % 2]:
+                            if st.checkbox(b, value=tumunu_sec, key=f"chk_{b}"):
+                                secilen_dosyalar.append(b)
                 else:
-                    st.warning("Bu kategoride kayıtlı belge bulunamadı.")
+                    st.info("Bu kategoriye ait henüz yüklenmiş belge bulunmuyor.")
             except Exception:
-                st.error("Belgeler yüklenirken hata oluştu.")
+                st.error("Belgeler yüklenemedi.")
 
-            if "arama_sonuclari" not in st.session_state:
-                st.session_state.arama_sonuclari = None
-            if "aranan_terimler" not in st.session_state:
-                st.session_state.aranan_terimler = None
-            if "tam_kelime_modu" not in st.session_state:
-                st.session_state.tam_kelime_modu = False
+        # --- Arama Çubuğu ve Temizleme Alanı ---
+        col_info, col_reset = st.columns([4, 1])
+        with col_info:
+            st.markdown(f"Aktif Kategori: <span class='badge-cat'>{st.session_state.aktif_kategori}</span> ({len(secilen_dosyalar)} Belge Aktif)", unsafe_allow_html=True)
+        with col_reset:
+            if sonuclar_mevcut:
+                if st.button("🗑️ Aramayı Sıfırla", use_container_width=True):
+                    arama_durumunu_sifirla()
+                    st.rerun()
 
-            aranan_ham = st.chat_input('Aranacak kelimeyi yazın (Tam kelime için: "or")...')
+        # Arama Giriş Formu
+        with st.form("arama_formu", clear_on_submit=False):
+            f_col1, f_col2 = st.columns([5, 1])
+            with f_col1:
+                arama_metni = st.text_input(
+                    "Aranacak terimi yazın:",
+                    value=st.session_state.son_aranan,
+                    placeholder='Örn: ayak hatası, toilet break veya sadece tam kelime için: "or", "let"',
+                    label_visibility="collapsed"
+                )
+            with f_col2:
+                ara_tiklandi = st.form_submit_button("🔍 Ara", use_container_width=True, type="primary")
 
-            if aranan_ham:
-                if not secilen_dosyalar and mevcut_belgeler:
-                    st.error("Lütfen arama yapmak için en az bir belge işaretleyin!")
-                else:
-                    with st.chat_message("user"):
-                        st.write(aranan_ham)
+        # Arama Tetiklendiğinde
+        if ara_tiklandi and arama_metni.strip():
+            # Önceki sonuçları ve session durumlarını temizle
+            arama_durumunu_sifirla()
+            st.session_state.son_aranan = arama_metni.strip()
 
-                    with st.spinner("Seçili belgelerde taranıyor..."):
-                        try:
-                            ham_metin = aranan_ham.strip()
-                            tam_kelime = False
-                            if (ham_metin.startswith('"') and ham_metin.endswith('"')) or \
-                               (ham_metin.startswith("'") and ham_metin.endswith("'")):
-                                tam_kelime = True
-                                aranan_ilk = ham_metin[1:-1].lower().strip()
-                            else:
-                                aranan_ilk = ham_metin.lower().strip()
+            if not secilen_dosyalar and mevcut_belgeler:
+                st.warning("Lütfen yukarıdaki filtreden en az bir belge seçin.")
+            else:
+                with st.spinner("İlgili kural sayfaları taranıyor..."):
+                    try:
+                        ham_metin = arama_metni.strip()
+                        tam_kelime = False
+                        if (ham_metin.startswith('"') and ham_metin.endswith('"')) or \
+                           (ham_metin.startswith("'") and ham_metin.endswith("'")):
+                            tam_kelime = True
+                            aranan_ilk = ham_metin[1:-1].lower().strip()
+                        else:
+                            aranan_ilk = ham_metin.lower().strip()
 
-                            aranan_ilk = re.sub(r'\s+', ' ', aranan_ilk)
-                            st.session_state.tam_kelime_modu = tam_kelime
+                        aranan_ilk = re.sub(r'\s+', ' ', aranan_ilk)
+                        st.session_state.tam_kelime_modu = tam_kelime
 
-                            temel_terimler = {aranan_ilk}
+                        temel_terimler = {aranan_ilk}
 
-                            # Tek yönlü sözlük: Sadece kullanıcı Türkçe girdiğinde İngilizceler eklenir
-                            if not tam_kelime:
-                                for tr_key, en_list in TENNIS_SOZLugu.items():
-                                    if aranan_ilk == tr_key:
-                                        temel_terimler.update(en_list)
+                        # Tek Yönlü Sözlük (TR -> EN)
+                        if not tam_kelime:
+                            for tr_key, en_list in TENNIS_SOZLugu.items():
+                                if aranan_ilk == tr_key:
+                                    temel_terimler.update(en_list)
 
-                            aranacak_terimler = set()
-                            for terim in temel_terimler:
-                                aranacak_terimler.add(terim)
-                                if ' ' in terim:
-                                    aranacak_terimler.add(terim.replace(' ', ''))
-                                    aranacak_terimler.add(terim.replace(' ', '-'))
-                                if '-' in terim:
-                                    aranacak_terimler.add(terim.replace('-', ''))
-                                    aranacak_terimler.add(terim.replace('-', ' '))
+                        aranacak_terimler = set()
+                        for terim in temel_terimler:
+                            aranacak_terimler.add(terim)
+                            if ' ' in terim:
+                                aranacak_terimler.add(terim.replace(' ', ''))
+                                aranacak_terimler.add(terim.replace(' ', '-'))
+                            if '-' in terim:
+                                aranacak_terimler.add(terim.replace('-', ''))
+                                aranacak_terimler.add(terim.replace('-', ' '))
 
-                            aranacak_terimler_listesi = list(aranacak_terimler)
+                        aranacak_terimler_listesi = list(aranacak_terimler)
 
-                            sorgu = supabase.table("kural_icerikleri").select("dosya_adi, kategori, sayfa_no, dosya_url, icerik")
-                            sorgu = sorgu.in_("dosya_adi", secilen_dosyalar)
-                            
-                            filtre_parcalari = [f"icerik.ilike.%{terim}%" for terim in aranacak_terimler_listesi]
-                            sorgu = sorgu.or_(",".join(filtre_parcalari))
+                        sorgu = supabase.table("kural_icerikleri").select("dosya_adi, kategori, sayfa_no, dosya_url, icerik")
+                        sorgu = sorgu.in_("dosya_adi", secilen_dosyalar)
+                        
+                        filtre_parcalari = [f"icerik.ilike.%{terim}%" for terim in aranacak_terimler_listesi]
+                        sorgu = sorgu.or_(",".join(filtre_parcalari))
 
-                            ham_sonuclar = sorgu.execute().data
+                        ham_sonuclar = sorgu.execute().data
 
-                            if tam_kelime:
-                                filtrelenmis_sonuclar = []
-                                regex_kalip = re.compile(rf'\b{re.escape(aranan_ilk)}\b', re.IGNORECASE)
-                                for k in ham_sonuclar:
-                                    if regex_kalip.search(k['icerik']):
-                                        filtrelenmis_sonuclar.append(k)
-                                st.session_state.arama_sonuclari = filtrelenmis_sonuclar
-                            else:
-                                st.session_state.arama_sonuclari = ham_sonuclar
+                        if tam_kelime:
+                            filtrelenmis = []
+                            regex_kalip = re.compile(rf'\b{re.escape(aranan_ilk)}\b', re.IGNORECASE)
+                            for k in ham_sonuclar:
+                                if regex_kalip.search(k['icerik']):
+                                    filtrelenmis.append(k)
+                            st.session_state.arama_sonuclari = filtrelenmis
+                        else:
+                            st.session_state.arama_sonuclari = ham_sonuclar
 
-                            st.session_state.aranan_terimler = aranacak_terimler_listesi
-                        except Exception as e:
-                            st.error(f"Arama sırasında hata oluştu: {e}")
+                        st.session_state.aranan_terimler = aranacak_terimler_listesi
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Sorgulama sırasında hata oluştu: {e}")
 
-            if st.session_state.arama_sonuclari is not None:
-                sonuclar = st.session_state.arama_sonuclari
-                aranacak_terimler_listesi = st.session_state.aranan_terimler
-                tam_kelime = st.session_state.tam_kelime_modu
+        # --- ARAMA SONUÇLARININ LİSTELENMESİ ---
+        if st.session_state.arama_sonuclari is not None:
+            sonuclar = st.session_state.arama_sonuclari
+            aranacak_terimler_listesi = st.session_state.aranan_terimler or []
+            tam_kelime = st.session_state.tam_kelime_modu
 
-                if sonuclar:
-                    st.success(f"Bulunan ilgili sayfa sayısı: {len(sonuclar)}")
+            st.markdown("---")
+            if sonuclar:
+                st.markdown(f"#### 🎯 Bulunan İlgili Kural Sayfaları ({len(sonuclar)})")
+                
+                for idx, kayit in enumerate(sonuclar):
+                    sayfa_no = kayit.get('sayfa_no', 1)
+                    pdf_url = kayit['dosya_url']
+                    if isinstance(pdf_url, dict):
+                        pdf_url = pdf_url.get('publicUrl', '')
 
-                    for idx, kayit in enumerate(sonuclar):
-                        sayfa_no = kayit.get('sayfa_no', 1)
-                        st.markdown(f"**Belge:** {kayit['dosya_adi']} *({kayit['kategori']}) | Sayfa: {sayfa_no}*")
+                    metin = kayit['icerik']
+                    metin_lower = metin.lower()
 
-                        pdf_url = kayit['dosya_url']
-                        if isinstance(pdf_url, dict):
-                            pdf_url = pdf_url.get('publicUrl', '')
+                    bulunan_varyasyon = aranacak_terimler_listesi[0] if aranacak_terimler_listesi else ""
+                    for varyasyon in aranacak_terimler_listesi:
+                        if tam_kelime:
+                            if re.search(rf'\b{re.escape(varyasyon)}\b', metin_lower):
+                                bulunan_varyasyon = varyasyon
+                                break
+                        else:
+                            if varyasyon in metin_lower:
+                                bulunan_varyasyon = varyasyon
+                                break
 
-                        metin = kayit['icerik']
-                        metin_lower = metin.lower()
-
-                        bulunan_varyasyon = aranacak_terimler_listesi[0]
-                        for varyasyon in aranacak_terimler_listesi:
-                            if tam_kelime:
-                                if re.search(rf'\b{re.escape(varyasyon)}\b', metin_lower):
-                                    bulunan_varyasyon = varyasyon
-                                    break
-                            else:
-                                if varyasyon in metin_lower:
-                                    bulunan_varyasyon = varyasyon
-                                    break
-
-                        if pdf_url:
-                            url_kodlu_terim = urllib.parse.quote(f'"{bulunan_varyasyon}"')
-                            hedefli_url = f"{pdf_url}?render=true#page={sayfa_no}&search={url_kodlu_terim}"
+                    # HER SONUÇ İÇİN İZOLE, ŞIK VE ÇERÇEVELİ KART
+                    with st.container(border=True):
+                        h_col1, h_col2 = st.columns([3, 2])
+                        with h_col1:
                             st.markdown(
-                                f'''<a href="{hedefli_url}" target="_blank" 
-                                style="background-color: #2e3034; color: #39ff14; padding: 8px 12px; border-radius: 6px; text-decoration: none; display: inline-block; margin-bottom: 10px; font-weight: bold; border: 1px solid #39ff14;">
-                                ↗️ {sayfa_no}. Sayfayı Aç ve "{bulunan_varyasyon}" Kelimesini Vurgula
-                                </a>''',
+                                f"📄 **{kayit['dosya_adi']}** &nbsp; "
+                                f"<span class='badge-cat'>{kayit['kategori']}</span> &nbsp; "
+                                f"<span class='badge-page'>Sayfa {sayfa_no}</span>",
                                 unsafe_allow_html=True
                             )
+                        with h_col2:
+                            if pdf_url:
+                                url_kodlu = urllib.parse.quote(f'"{bulunan_varyasyon}"')
+                                hedefli_url = f"{pdf_url}?render=true#page={sayfa_no}&search={url_kodlu}"
+                                st.markdown(
+                                    f"<div style='text-align: right;'><a href='{hedefli_url}' target='_blank' class='pdf-btn'>↗️ {sayfa_no}. Sayfayı Aç ve Vurgula</a></div>",
+                                    unsafe_allow_html=True
+                                )
 
+                        # Alıntı ve Fosforlu Vurgu Alanı
                         if tam_kelime:
                             match = re.search(rf'\b{re.escape(bulunan_varyasyon)}\b', metin, re.IGNORECASE)
                             idx_text = match.start() if match else -1
@@ -307,161 +387,151 @@ def hakem_panelini_ciz():
                             idx_text = metin_lower.find(bulunan_varyasyon)
 
                         if idx_text != -1:
-                            baslangic = max(0, idx_text - 120)
-                            bitis = min(len(metin), idx_text + 350)
+                            baslangic = max(0, idx_text - 140)
+                            bitis = min(len(metin), idx_text + 400)
                             kesit = metin[baslangic:bitis].replace("\n", " ")
                             
-                            if tam_kelime:
-                                pattern = re.compile(rf'\b({re.escape(bulunan_varyasyon)})\b', re.IGNORECASE)
-                            else:
-                                pattern = re.compile(re.escape(bulunan_varyasyon), re.IGNORECASE)
-                                
-                            vurgulu_kesit = pattern.sub(lambda m: f'<span style="background-color: #39ff14; color: #000000; font-weight: bold; padding: 2px 4px; border-radius: 3px;">{m.group(0)}</span>', kesit)
-                            st.markdown(f"**İlgili Bağlam:**<br>...{vurgulu_kesit}...", unsafe_allow_html=True)
+                            pattern = re.compile(rf'\b({re.escape(bulunan_varyasyon)})\b' if tam_kelime else re.escape(bulunan_varyasyon), re.IGNORECASE)
+                            vurgulu = pattern.sub(lambda m: f"<span style='background-color: #38bdf8; color: #020617; font-weight: bold; padding: 2px 5px; border-radius: 4px;'>{m.group(0)}</span>", kesit)
+                            st.markdown(f"<div class='snippet-box'>...{vurgulu}...</div>", unsafe_allow_html=True)
                         else:
-                            st.markdown(f"**İlgili Bağlam:**<br>...{metin[:300]}...", unsafe_allow_html=True)
+                            st.markdown(f"<div class='snippet-box'>...{metin[:350]}...</div>", unsafe_allow_html=True)
 
-                        # Sahadaki Durum & Resmi Kural Dayanağı Girişi
-                        st.markdown(f"**⚖️ {sayfa_no}. Sayfaya Göre Olayı Çöz ve Dayanaklandır**")
-                        ai_soru = st.text_input("Sahada karşılaşılan pozisyon / soru:", key=f"soru_{idx}")
+                        # AI Alanı: Varsayılan olarak kapalıdır, ekranı doldurmaz
+                        with st.expander("⚖️ Bu Sayfa Kuralını Yapay Zekaya Danış (Karar & Madde Dayanağı)"):
+                            ai_soru = st.text_input("Sahada karşılaşılan pozisyonu veya tereddüdü yazın:", key=f"q_{idx}")
+                            btn_c1, btn_c2 = st.columns(2)
+                            
+                            with btn_c1:
+                                if st.button("⚡ Groq ile Çöz", key=f"btn_groq_{idx}", use_container_width=True):
+                                    if not ai_soru:
+                                        st.warning("Lütfen pozisyonu yazın.")
+                                    elif not groq_client:
+                                        st.error("Groq API anahtarı ayarlanmamış.")
+                                    else:
+                                        st.markdown("---")
+                                        st.write_stream(groq_ile_coz(groq_client, metin, ai_soru))
 
-                        btn_col1, btn_col2 = st.columns(2)
+                            with btn_c2:
+                                if st.button("✨ Gemini ile Çöz", key=f"btn_gemini_{idx}", use_container_width=True):
+                                    if not ai_soru:
+                                        st.warning("Lütfen pozisyonu yazın.")
+                                    elif not gemini_model:
+                                        st.error("Gemini API anahtarı ayarlanmamış.")
+                                    else:
+                                        st.markdown("---")
+                                        st.write_stream(gemini_ile_coz(gemini_model, metin, ai_soru))
+            else:
+                st.warning("Seçili belgelerde aranan terime ilişkin bir kayıt bulunamadı.")
 
-                        with btn_col1:
-                            if st.button("⚡ Groq ile Analiz Et", key=f"groq_{idx}", use_container_width=True):
-                                if not ai_soru:
-                                    st.warning("Lütfen pozisyonu yazın.")
-                                elif not groq_client:
-                                    st.error("Groq API anahtarı ayarlanmamış.")
-                                else:
-                                    st.markdown("---")
-                                    st.write_stream(groq_ile_coz(groq_client, metin, ai_soru))
-
-                        with btn_col2:
-                            if st.button("✨ Gemini ile Analiz Et", key=f"gemini_{idx}", use_container_width=True):
-                                if not ai_soru:
-                                    st.warning("Lütfen pozisyonu yazın.")
-                                elif not gemini_model:
-                                    st.error("Gemini API anahtarı ayarlanmamış.")
-                                else:
-                                    st.markdown("---")
-                                    st.write_stream(gemini_ile_coz(gemini_model, metin, ai_soru))
-
-                        st.markdown("---")
-                else:
-                    st.warning("Seçili belgelerde bu terime rastlanmadı.")
-
-    # ------------------ 2. GENEL YAPAY ZEKA SEKMESİ ------------------
+    # ==================== 2. GENEL OLAY ÇÖZÜCÜ AI SEKMESİ ====================
     with sekme_ai:
         st.subheader("⚖️ Başhakem Olay ve Kural Danışmanı")
-        st.markdown("Olayı yazın; seçtiğiniz talimat metnine sadık kalarak operasyonel adımları ve madde dayanaklarını sunalım.")
+        st.caption("Doğrudan seçtiğiniz kategorideki kitapçıkları tarayarak operasyonel adım ve madde dayanağı üretir.")
 
         if st.session_state.aktif_kategori == "Kategori Seçilmedi" or st.session_state.aktif_kategori == "Tüm Talimatlar":
-            st.warning("Lütfen arama sekmesinden taranacak tek bir kategori belirleyin.")
+            st.warning("Lütfen arama sekmesinden taranacak tek bir kategori seçin.")
         else:
-            ai_secilen_dosyalar = []
+            ai_secilen = []
             try:
-                sorgu_belgeler_ai = supabase.table("kural_icerikleri").select("dosya_adi").eq("kategori", st.session_state.aktif_kategori)
-                belge_sonuc_ai = sorgu_belgeler_ai.execute().data
-                mevcut_belgeler_ai = sorted(list(set([row["dosya_adi"] for row in belge_sonuc_ai])))
-
-                if mevcut_belgeler_ai:
-                    st.markdown("###### İncelenecek Talimatlar:")
-                    tumunu_sec_ai = st.toggle("Tümünü Seç / Kaldır", value=True, key="toggle_ai")
-                    for belge in mevcut_belgeler_ai:
-                        if st.checkbox(belge, value=tumunu_sec_ai, key=f"ai_chk_{belge}"):
-                            ai_secilen_dosyalar.append(belge)
+                sorgu_ai = supabase.table("kural_icerikleri").select("dosya_adi").eq("kategori", st.session_state.aktif_kategori)
+                sonuclar_ai = sorgu_ai.execute().data
+                dosyalar_ai = sorted(list(set([r["dosya_adi"] for r in sonuclar_ai])))
+                if dosyalar_ai:
+                    with st.expander("İncelenecek Belgeleri Düzenle", expanded=False):
+                        for d in dosyalar_ai:
+                            if st.checkbox(d, value=True, key=f"ai_chk_{d}"):
+                                ai_secilen.append(d)
+                else:
+                    ai_secilen = []
             except Exception:
-                pass
+                ai_secilen = []
 
-            genel_olay = st.text_area("Sahada yaşanan olayı detaylandırın:", height=100)
-            g_col1, g_col2 = st.columns(2)
-
-            calistir_groq = g_col1.button("⚡ Groq ile Analiz Et", use_container_width=True, type="primary")
-            calistir_gemini = g_col2.button("✨ Gemini ile Analiz Et", use_container_width=True)
+            genel_olay = st.text_area("Sahada yaşanan olayı detaylandırın:", height=110, placeholder="Örn: Raket elden fırlayıp fileye değerse ancak top daha önce rakip sahada iki kez sekmişse ne kararı verilir?")
+            g1, g2 = st.columns(2)
+            calistir_groq = g1.button("⚡ Groq ile Analiz Et", use_container_width=True, type="primary")
+            calistir_gemini = g2.button("✨ Gemini ile Analiz Et", use_container_width=True)
 
             if (calistir_groq or calistir_gemini) and genel_olay:
-                if not ai_secilen_dosyalar and mevcut_belgeler_ai:
-                    st.error("Lütfen incelenecek en az bir belge seçin.")
+                if not ai_secilen and dosyalar_ai:
+                    st.error("Lütfen taranacak en az bir belge seçin.")
                 else:
-                    with st.spinner("Kurallar taranıyor ve derleniyor..."):
+                    with st.spinner("Kurallar taranıyor ve analiz ediliyor..."):
                         kelimeler = [k.lower().strip() for k in genel_olay.split() if len(k) > 2]
-                        sorgu = supabase.table("kural_icerikleri").select("sayfa_no, icerik").eq("kategori", st.session_state.aktif_kategori).in_("dosya_adi", ai_secilen_dosyalar)
+                        sorgu = supabase.table("kural_icerikleri").select("sayfa_no, icerik").eq("kategori", st.session_state.aktif_kategori).in_("dosya_adi", ai_secilen)
 
                         if kelimeler:
                             filtre_parcalari = [f"icerik.ilike.%{k}%" for k in kelimeler[:4]]
                             sorgu = sorgu.or_(",".join(filtre_parcalari))
 
-                        response = sorgu.limit(10).execute()
+                        resp = sorgu.limit(10).execute()
+                        baglam = ""
+                        if resp.data:
+                            for row in resp.data:
+                                baglam += f"\n--- Sayfa {row['sayfa_no']} ---\n{row['icerik']}\n"
 
-                        baglam_metni = ""
-                        if response.data:
-                            for satir in response.data:
-                                baglam_metni += f"\n--- Sayfa {satir['sayfa_no']} ---\n{satir['icerik']}\n"
+                        if not baglam:
+                            yedek = supabase.table("kural_icerikleri").select("sayfa_no, icerik").eq("kategori", st.session_state.aktif_kategori).in_("dosya_adi", ai_secilen).limit(5).execute()
+                            for row in yedek.data:
+                                baglam += f"\n--- Sayfa {row['sayfa_no']} ---\n{row['icerik']}\n"
 
-                        if not baglam_metni:
-                            yedek = supabase.table("kural_icerikleri").select("sayfa_no, icerik").eq("kategori", st.session_state.aktif_kategori).in_("dosya_adi", ai_secilen_dosyalar).limit(5).execute()
-                            for satir in yedek.data:
-                                baglam_metni += f"\n--- Sayfa {satir['sayfa_no']} ---\n{satir['icerik']}\n"
-
+                        st.markdown("---")
                         if calistir_groq:
                             if groq_client:
-                                st.markdown("---")
-                                st.write_stream(groq_ile_coz(groq_client, baglam_metni, genel_olay))
+                                st.write_stream(groq_ile_coz(groq_client, baglam, genel_olay))
                             else:
                                 st.error("Groq API anahtarı bulunamadı.")
                         elif calistir_gemini:
                             if gemini_model:
-                                st.markdown("---")
-                                st.write_stream(gemini_ile_coz(gemini_model, baglam_metni, genel_olay))
+                                st.write_stream(gemini_ile_coz(gemini_model, baglam, genel_olay))
                             else:
                                 st.error("Gemini API anahtarı bulunamadı.")
 
-    # ------------------ 3. İNDEKS SEKMESİ ------------------
+    # ==================== 3. BELGE KÜTÜPHANESİ SEKMESİ ====================
     with sekme_indeks:
-        st.subheader("📚 Kayıtlı Belgeler Kütüphanesi")
+        st.subheader("📚 Kayıtlı Belgeler Arşivi")
         try:
             response = supabase.table("kural_icerikleri").select("dosya_adi, kategori, dosya_url").limit(10000).execute()
             if response.data:
                 df = pd.DataFrame(response.data)
                 df_unique = df.drop_duplicates(subset=["dosya_adi"]).reset_index(drop=True)
 
-                siralama_turu = st.radio("Filtreleme Modu:", ["Alfabetik Sıralama", "Kategoriye Göre"], horizontal=True)
+                filtreleme = st.radio("Sıralama / Görünüm:", ["Alfabetik Sıralama", "Kategoriye Göre Grupla"], horizontal=True)
 
-                if siralama_turu == "Alfabetik Sıralama":
+                if filtreleme == "Alfabetik Sıralama":
                     df_unique = df_unique.sort_values(by="dosya_adi", ascending=True)
                     st.markdown("---")
                     for idx, row in df_unique.iterrows():
-                        col1, col2, col3 = st.columns([3, 2, 1])
-                        with col1:
-                            st.markdown(f"**{row['dosya_adi']}**")
-                        with col2:
-                            st.caption(f"📂 {row['kategori']}")
-                        with col3:
-                            doc_url = row['dosya_url']
-                            if isinstance(doc_url, dict):
-                                doc_url = doc_url.get('publicUrl', '')
-                            if doc_url:
-                                st.markdown(f"🔗 [Aç / İndir]({doc_url})")
-                        st.markdown("---")
+                        with st.container(border=True):
+                            c1, c2, c3 = st.columns([4, 2, 1])
+                            with c1:
+                                st.markdown(f"📄 **{row['dosya_adi']}**")
+                            with c2:
+                                st.markdown(f"<span class='badge-cat'>{row['kategori']}</span>", unsafe_allow_html=True)
+                            with c3:
+                                doc_url = row['dosya_url']
+                                if isinstance(doc_url, dict):
+                                    doc_url = doc_url.get('publicUrl', '')
+                                if doc_url:
+                                    st.markdown(f"<a href='{doc_url}' target='_blank' class='pdf-btn'>Aç</a>", unsafe_allow_html=True)
                 else:
                     kategoriler_listesi = df_unique["kategori"].unique().tolist()
                     if kategoriler_listesi:
-                        secilen_grup = st.selectbox("Görüntülenecek Kategoriyi Seçin:", kategoriler_listesi)
+                        secilen_grup = st.selectbox("Görüntülenecek Kategori:", kategoriler_listesi)
                         df_filtered = df_unique[df_unique["kategori"] == secilen_grup].sort_values(by="dosya_adi")
                         st.markdown("---")
                         if not df_filtered.empty:
                             for idx, row in df_filtered.iterrows():
-                                col1, col2 = st.columns([4, 1])
-                                with col1:
-                                    st.markdown(f"**{row['dosya_adi']}**")
-                                with col2:
-                                    doc_url = row['dosya_url']
-                                    if isinstance(doc_url, dict):
-                                        doc_url = doc_url.get('publicUrl', '')
-                                    if doc_url:
-                                        st.markdown(f"🔗 [Aç / İndir]({doc_url})")
-                                st.markdown("---")
+                                with st.container(border=True):
+                                    c1, c2 = st.columns([5, 1])
+                                    with c1:
+                                        st.markdown(f"📄 **{row['dosya_adi']}**")
+                                    with c2:
+                                        doc_url = row['dosya_url']
+                                        if isinstance(doc_url, dict):
+                                            doc_url = doc_url.get('publicUrl', '')
+                                        if doc_url:
+                                            st.markdown(f"<a href='{doc_url}' target='_blank' class='pdf-btn'>Aç</a>", unsafe_allow_html=True)
                         else:
                             st.info("Bu kategoride kayıtlı belge bulunmuyor.")
             else:
