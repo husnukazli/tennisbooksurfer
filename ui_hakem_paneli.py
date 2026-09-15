@@ -14,16 +14,13 @@ def supabase_baglantisi_kur():
     return create_client(url, key)
 
 HAKEM_ROL_TANIMI = (
-    "Sen uluslararası düzeyde görev yapan kıdemli bir Tenis Başhakemi ve Kural Uzmanısın. "
-    "Sana sunulan 'RESMİ KURAL METNİ' dışına asla çıkma. Genel tenis ezberlerini ve varsayımlarını unut. "
-    "Cevaplarını kesinlikle HİKAYELEŞTİRMEDEN, gereksiz laf kalabalığı yapmadan, net 2 ana başlık halinde yapılandır:\n\n"
-    "### 1. SAHADA ANINDA VERİLECEK KARAR VE USUL\n"
-    "- Hakemin/oyuncunun sahada o an atması gereken adımları madde madde (1, 2, 3...) kısa, net ve operasyonel olarak yaz.\n\n"
-    "### 2. KURAL VE TALİMAT DAYANAĞI (Madde & Sayfa Referansı)\n"
-    "- Bu kararın sunulan metindeki tam dayanağını belirt.\n"
-    "- Varsa Belge Adı, Kural/Madde No, Başlık ve Sayfa Numarasını açıkça yaz.\n"
-    "- Kitapçıktaki ilgili kural cümlesini/hükmünü tırnak içinde doğrudan alıntılayarak göster.\n"
-    "- Metinde doğrudan yazmayan hiçbir ceza veya kuralı dışarıdan uydurma."
+    "Sen tenis kuralları ve turnuva talimatları konusunda uzman bir teknik danışmansın. "
+    "Sana sunulan 'RESMİ KURAL METNİ'ne harfiyen bağlı kal. "
+    "'Başhakem şunu yapar, kule hakemi oyunu durdurur, turnuva masasına gider' gibi kurgusal saha eylemleri veya yapay senaryolar YAZMA. "
+    "Doğrudan kuralın teknik içeriğine odaklan ve yanıtını nesnel, sade bir şekilde şu 3 başlık altında sun:\n\n"
+    "**1. İlgili Kural ve Hüküm:** Sorulan durumla ilgili talimatta yer alan kural hükmü ve sonucu.\n"
+    "**2. Kuralın Açıklaması:** Bu kuralın kapsamı, teknik işleyişi ve neyi öngördüğünün net açıklaması.\n"
+    "**3. Maddedeki Yeri ve Referans:** Belge adı, kural/madde numarası, sayfa numarası ve ilgili metinden doğrudan alıntı."
 )
 
 def gemini_modeli_ayarla():
@@ -56,12 +53,15 @@ def gemini_ile_coz(model, baglam_metni, olay_metni):
         RESMİ KURAL METNİ:
         {baglam_metni}
 
-        SAHADA YAŞANAN DURUM / SORU:
+        SORULAN DURUM / SORU:
         "{olay_metni}"
 
         GÖREV:
-        1. 'SAHADA ANINDA VERİLECEK KARAR VE USUL': Hikaye anlatmadan doğrudan uygulanacak adımları listele.
-        2. 'KURAL VE TALİMAT DAYANAĞI': Sayfa no, madde no ve metindeki ilgili alıntıyı referans göster.
+        Saha içi senaryo veya rol yapma ifadeleri kullanmadan;
+        1. İlgili Kural ve Hüküm
+        2. Kuralın Açıklaması
+        3. Maddedeki Yeri ve Referans (Sayfa No, Madde No ve alıntı)
+        başlıklarıyla doğrudan kuralı ve yerini açıkla.
         """
         response = model.generate_content(prompt, stream=True)
         for chunk in response:
@@ -71,19 +71,16 @@ def gemini_ile_coz(model, baglam_metni, olay_metni):
         yield f"⚠️ Gemini Hatası: {str(e)}"
 
 def groq_ile_coz(client, baglam_metni, olay_metni):
-    # Hesabınızdaki aktif ve erişilebilir modelleri dinamik olarak sorguluyoruz
     aktif_modeller = []
     try:
         modeller_cevap = client.models.list()
         for m in modeller_cevap.data:
             m_id = m.id.lower()
-            # Ses, konuşma veya güvenlik modellerini filtrele; yalnızca metin modellerini al
             if not any(yasak in m_id for yasak in ["whisper", "tts", "guard", "safeguard", "orpheus"]):
                 aktif_modeller.append(m.id)
     except Exception:
         aktif_modeller = []
 
-    # Öncelikli denenecek güncel modeller
     oncelik_sirasi = [
         "openai/gpt-oss-120b",
         "openai/gpt-oss-20b",
@@ -92,12 +89,9 @@ def groq_ile_coz(client, baglam_metni, olay_metni):
         "llama-3.1-8b-instant"
     ]
 
-    # Hesaptaki modelleri öncelik sırasına göre diz
     denenecek_modeller = [m for m in oncelik_sirasi if m in aktif_modeller]
-    # Hesaptaki diğer tüm metin modellerini de listenin sonuna yedek olarak ekle
     denenecek_modeller += [m for m in aktif_modeller if m not in denenecek_modeller]
 
-    # Eğer liste çekilemediyse varsayılan listeyi doğrudan dene
     if not denenecek_modeller:
         denenecek_modeller = oncelik_sirasi
 
@@ -112,10 +106,12 @@ def groq_ile_coz(client, baglam_metni, olay_metni):
                         "role": "user",
                         "content": (
                             f"RESMİ KURAL METNİ:\n{baglam_metni}\n\n"
-                            f"SAHADA YAŞANAN DURUM / SORU:\n{olay_metni}\n\n"
+                            f"SORULAN DURUM / SORU:\n{olay_metni}\n\n"
                             "GÖREV:\n"
-                            "1. 'SAHADA ANINDA VERİLECEK KARAR VE USUL' başlığı altında hikayesiz, operasyonel adımları yaz.\n"
-                            "2. 'KURAL VE TALİMAT DAYANAĞI' başlığı altında kural adı, madde no, sayfa no ve ilgili alıntıyı eksiksiz ver."
+                            "Saha içi senaryo kurmadan, doğrudan şu 3 başlık altında bilgi ver:\n"
+                            "1. İlgili Kural ve Hüküm\n"
+                            "2. Kuralın Açıklaması\n"
+                            "3. Maddedeki Yeri ve Referans (Belge, Sayfa no, Madde no ve ilgili alıntı)"
                         )
                     }
                 ],
@@ -127,7 +123,7 @@ def groq_ile_coz(client, baglam_metni, olay_metni):
                 delta = chunk.choices[0].delta.content
                 if delta:
                     yield delta
-            return  # Başarılı şekilde yanıt akışı tamamlandı
+            return
         except Exception as e:
             son_hata = f"{model_adi} ({str(e)})"
             continue
@@ -209,7 +205,7 @@ def hakem_panelini_ciz():
     if 'son_aranan' not in st.session_state:
         st.session_state.son_aranan = ""
 
-    sekme_arama, sekme_ai, sekme_indeks = st.tabs(["🔍 Hızlı Kural Arama", "⚖️ Olay Çözücü AI", "📚 Belge Kütüphanesi"])
+    sekme_arama, sekme_ai, sekme_indeks = st.tabs(["🔍 Kural Arama", "📖 Kural Analiz Motoru", "📚 Belge Kütüphanesi"])
 
     # ==================== 1. KURAL ARAMA SEKMESİ ====================
     with sekme_arama:
@@ -409,14 +405,14 @@ def hakem_panelini_ciz():
                         else:
                             st.markdown(f"<div class='snippet-box'>...{metin[:350]}...</div>", unsafe_allow_html=True)
 
-                        with st.expander("⚖️ Bu Sayfa Kuralını Yapay Zekaya Danış (Karar & Madde Dayanağı)"):
-                            ai_soru = st.text_input("Sahada karşılaşılan pozisyonu veya tereddüdü yazın:", key=f"q_{idx}")
+                        with st.expander("📖 Bu Sayfadaki Kuralı ve Maddesini Açıkla"):
+                            ai_soru = st.text_input("Açıklanmasını istediğiniz kuralı veya konuyu yazın:", key=f"q_{idx}")
                             btn_c1, btn_c2 = st.columns(2)
                             
                             with btn_c1:
-                                if st.button("⚡ Groq ile Çöz", key=f"btn_groq_{idx}", use_container_width=True):
+                                if st.button("⚡ Groq ile Kuralı Getir", key=f"btn_groq_{idx}", use_container_width=True):
                                     if not ai_soru:
-                                        st.warning("Lütfen pozisyonu yazın.")
+                                        st.warning("Lütfen açıklanmasını istediğiniz konuyu yazın.")
                                     elif not groq_client:
                                         st.error("Groq API anahtarı ayarlanmamış.")
                                     else:
@@ -424,9 +420,9 @@ def hakem_panelini_ciz():
                                         st.write_stream(groq_ile_coz(groq_client, metin, ai_soru))
 
                             with btn_c2:
-                                if st.button("✨ Gemini ile Çöz", key=f"btn_gemini_{idx}", use_container_width=True):
+                                if st.button("✨ Gemini ile Kuralı Getir", key=f"btn_gemini_{idx}", use_container_width=True):
                                     if not ai_soru:
-                                        st.warning("Lütfen pozisyonu yazın.")
+                                        st.warning("Lütfen açıklanmasını istediğiniz konuyu yazın.")
                                     elif not gemini_model:
                                         st.error("Gemini API anahtarı ayarlanmamış.")
                                     else:
@@ -435,10 +431,10 @@ def hakem_panelini_ciz():
             else:
                 st.warning("Seçili belgelerde aranan terime ilişkin bir kayıt bulunamadı.")
 
-    # ==================== 2. GENEL OLAY ÇÖZÜCÜ AI SEKMESİ ====================
+    # ==================== 2. GENEL KURAL ANALİZ MOTORU SEKMESİ ====================
     with sekme_ai:
-        st.subheader("⚖️ Başhakem Olay ve Kural Danışmanı")
-        st.caption("Doğrudan seçtiğiniz kategorideki kitapçıkları tarayarak operasyonel adım ve madde dayanağı üretir.")
+        st.subheader("📖 Kural ve Madde Analiz Motoru")
+        st.caption("Doğrudan seçtiğiniz kategorideki talimat metnini inceleyerek kural hükmünü, açıklamasını ve maddedeki yerini çıkarır.")
 
         if st.session_state.aktif_kategori == "Kategori Seçilmedi" or st.session_state.aktif_kategori == "Tüm Talimatlar":
             st.warning("Lütfen arama sekmesinden taranacak tek bir kategori seçin.")
@@ -458,16 +454,16 @@ def hakem_panelini_ciz():
             except Exception:
                 ai_secilen = []
 
-            genel_olay = st.text_area("Sahada yaşanan olayı detaylandırın:", height=110, placeholder="Örn: Raket elden fırlayıp fileye değerse ancak top daha önce rakip sahada iki kez sekmişse ne kararı verilir?")
+            genel_olay = st.text_area("Merak ettiğiniz durumu veya kuralı yazın:", height=110, placeholder="Örn: Top rakip sahada çift sekmeden önce raket fileye değerse kural ne der?")
             g1, g2 = st.columns(2)
-            calistir_groq = g1.button("⚡ Groq ile Analiz Et", use_container_width=True, type="primary")
-            calistir_gemini = g2.button("✨ Gemini ile Analiz Et", use_container_width=True)
+            calistir_groq = g1.button("⚡ Groq ile Kuralı Açıkla", use_container_width=True, type="primary")
+            calistir_gemini = g2.button("✨ Gemini ile Kuralı Açıkla", use_container_width=True)
 
             if (calistir_groq or calistir_gemini) and genel_olay:
                 if not ai_secilen and dosyalar_ai:
                     st.error("Lütfen taranacak en az bir belge seçin.")
                 else:
-                    with st.spinner("Kurallar taranıyor ve analiz ediliyor..."):
+                    with st.spinner("İlgili kural maddeleri taranıyor..."):
                         kelimeler = [k.lower().strip() for k in genel_olay.split() if len(k) > 2]
                         sorgu = supabase.table("kural_icerikleri").select("sayfa_no, icerik").eq("kategori", st.session_state.aktif_kategori).in_("dosya_adi", ai_secilen)
 
